@@ -102,6 +102,7 @@ reject       inx                       ;try next candidate
               asl                      ;multiply by 16
               asl     
               asl     
+	      ;lda #0
               sta     slot_index        ;keep this around
               tax
               lda     IWM_Q7_OFF,x      ;set to read mode
@@ -199,12 +200,12 @@ rdbyte2a      lda     IWM_Q6_OFF,x      ;read second part
 ; On entry:
 ;   A: $00
 ; 
-FoundData     ldy     #86               ;read 86 bytes of data into $300-355
+FoundData     ldy     #86               ;read 86 ($56) bytes of data into $300-355
 read_twos_loop
               sty     bits              ;each byte has 3 sets of 2 bits, encoded
 rdbyte1b      ldy     IWM_Q6_OFF,x
               bpl     rdbyte1b
-              eor     $02d6,y           ;$02d6 + $96 = $36c, our first table entry
+              eor     CONV_TAB-128,y    ;$02d6 + $96 = $36c, our first table entry
               ldy     bits
               dey
               sta     TWOS_BUFFER,y     ;store these in our page 3 buffer
@@ -252,6 +253,9 @@ decode_loop  dex
               ldx     slot_index
               bcc     another          ;yes, go get another sector (note branch x2)
 ; All done, jump to BOOT1 ($0801).
-              jmp     BOOT1+1
+             ; jmp     BOOT1+1
+		nop
+		clc
+		rts
 
               .dsb   5                 ;spare bytes
