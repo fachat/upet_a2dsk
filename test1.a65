@@ -1,0 +1,70 @@
+
+IO	=$9000
+IDX	=$f0
+
+	.word $0401
+	*=$0401
+
+	.word link
+	.word 10
+	.byt $9e, "1040", 0
+link	.word 0
+
+	.dsb 1040-*
+
+	jsr upet_init
+
+	jsr ENTRY
+
+	rts
+
+
+
+upet_init .(
+	lda #%00000001		; map $9000 to external mem bus
+	sta $e804
+
+	lda #%10000000		; 1 MHz, and don't hide bogus cycles in phase 1 
+	sta $e803
+
+	rts
+	.)
+
+
+WAITX	.(
+WAIT     SEC          ;Prepare for subtraction.                   
+WAIT2    PHA          ;Save (a) on the stack.                     
+WAIT3    SBC #1       ;Keep on reducing (a) until it equals 0.    
+         BNE WAIT3                                                
+         PLA                                                      
+         SBC #1       ;Reduce the original (a) down to 0 again.   
+         BNE WAIT2                                                
+;(FCB3)  
+	 RTS                                                      
+	.)
+
+STACK         =     $0100  ;{addr/256}                                                 
+TWOS_BUFFER   =     $0300  ;{addr/86}  ;holds the 2-bit chunks                         
+CONV_TAB      =     $0356  ;{addr/128} ;6+2 conversion table                           
+BOOT1         =     $0800  ;{addr/256} ;buffer for next stage of loader                
+IWM_PH0_OFF   =     $c080             ;stepper motor control                           
+IWM_PH0_ON    =     $c081             ;stepper motor control                           
+IWM_MOTOR_ON  =     $c089             ;starts drive spinning                           
+IWM_SEL_DRIVE_1 =   $c08a             ;selects drive 1                                 
+IWM_Q6_OFF    =     $c08c             ;read                                            
+IWM_Q7_OFF    =     $c08e             ;WP sense/read                                   
+MON_WAIT      =     $fca8             ;delay for (26 + 27*Acc + 5*(Acc*Acc))/2 cycles  
+MON_IORTS     =     $ff58             ;JSR here to find out where one is               
+                                                                                       
+              ;.org    $c600                                                           
+data_ptr      =    $26    ;{addr/2}   ;pointer to BOOT1 data buffer                    
+slot_index    =    $2b    ;{addr/1}   ;slot number << 4                                
+bits          =    $3c    ;{addr/1}   ;temp storage for bit manipulation               
+sector        =    $3d    ;{addr/1}   ;sector to read                                  
+found_track   =    $40    ;{addr/1}   ;track found                                     
+track         =    $41    ;{addr/1}   ;track to read                                   
+
+	.dsb $0500-*
+
+#include "a2_boot0.a65"
+
