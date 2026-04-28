@@ -1,4 +1,7 @@
 
+;DELAY	=86
+DELAY	=200
+
 IO	=$9000
 IDX	=$f0
 
@@ -19,7 +22,6 @@ link	.word 0
 	jsr ENTRY
 
 	cli
-
 	rts
 
 
@@ -54,6 +56,7 @@ STACK         =     $0100  ;{addr/256}
 IWM_PH0_OFF   =     $90f0             ;stepper motor control                           
 IWM_PH0_ON    =     $90f1             ;stepper motor control                           
 IWM_MOTOR_ON  =     $90f9             ;starts drive spinning                           
+IWM_MOTOR_OFF =     $90f8             ;starts drive spinning                           
 IWM_SEL_DRIVE_1 =   $90fa             ;selects drive 1                                 
 IWM_Q6_OFF    =     $90fc             ;read                                            
 IWM_Q7_OFF    =     $90fe             ;WP sense/read                                   
@@ -70,7 +73,42 @@ track         =    $ed	;$41    ;{addr/1}   ;track to read
 
 	.dsb $0500-*
 
-#include "a2_boot0.a65"
+ENTRY	.(
+	; slot index 0
+	lda #0
+	sta slot_index
+	tax
+
+	; init drive
+	lda IWM_Q7_OFF,x
+	lda IWM_Q6_OFF,x
+	lda IWM_SEL_DRIVE_1,x
+	lda IWM_MOTOR_ON,x
+
+	; move head inwards 
+	ldy #0		
+seek_loop
+	lda IWM_PH0_OFF,x	; turn phase off
+	tya
+	and #$03
+	asl
+	ora slot_index
+	tax
+	lda IWM_PH0_ON,x
+	lda #DELAY
+	jsr MON_WAIT
+	iny
+	cpy #80
+	bcc seek_loop
+
+	lda #DELAY
+	jsr MON_WAIT
+
+	; motor off
+	ldx slot_index
+	lda IWM_MOTOR_OFF,x
+	rts
+	.)
 
 	.dsb $0600-*
 

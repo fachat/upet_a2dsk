@@ -100,9 +100,9 @@ reject       inx                       ;try next candidate
               lda     STACK,x           ;pull hi byte of our address off stack
               asl                      ;(we assume no interrupts have hit)
               asl                      ;multiply by 16
-              asl     
-              asl     
-	      ;lda #0
+              ;asl     
+              ;asl     
+	      lda #0
               sta     slot_index        ;keep this around
               tax
               lda     IWM_Q7_OFF,x      ;set to read mode

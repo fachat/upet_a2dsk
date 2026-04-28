@@ -1,0 +1,459 @@
+
+*---------------------------------
+*      DOS 3.2.1 $B800 - $BCFF
+*---------------------------------
+       .OR $B800
+       .TA $0800
+*---------------------------------
+BUF.PNTR   .EQ $3E,3F
+CURRENT.TRACK       .EQ $0478
+*---------------------------------
+*      DISK CONTROLLER ADDRESSES
+*---------------------------------
+PHOFF  .EQ $C080    PHASE-OFF
+PHON   .EQ $C081    PHASE-ON
+MTROFF .EQ $C088    MOTOR OFF
+MTRON  .EQ $C089    MOTOR ON
+DRV0EN .EQ $C08A    DRIVE 0 ENABLE
+DRV1EN .EQ $C08B    DRIVE 1 ENABLE
+Q6L    .EQ $C08C    SET Q6 LOW
+Q6H    .EQ $C08D    SET Q6 HIGH
+Q7L    .EQ $C08E    SET Q7 LOW
+Q7H    .EQ $C08F    SET Q7 HIGH
+*
+*      Q6    Q7     USE OF Q6 AND Q7 LINES
+*     ----  ----    ----------------------
+*     LOW   LOW     READ (DISK TO SHIFT REGISTER)
+*     LOW   HIGH    WRITE (SHIFT REGISTER TO DISK)
+*     HIGH  LOW     SENSE WRITE PROTECT
+*     HIGH  HIGH    LOAD SHIFT REGISTER FROM DATA BUS
+       .PG
+*---------------------------------
+*      CONVERT 256 BYTES TO 410 5-BIT NYBBLES
+*---------------------------------
+PRE.NYBBLE
+       LDX #50      51 BYTES PER SECTION
+       LDY #0       INDEX INTO 256-BYTE BUFFER
+*---BUFFER PART 1, SECTION 1-----
+.1     LDA (BUF.PNTR),Y  GET BYTE FROM BUFFER
+       STA $26      SAVE HERE FOR LOWER 3 BITS
+       LSR          USE TOP 5 BITS
+       LSR
+       LSR
+       STA RWTS.BUFFER.1.1,X
+*---BUFFER PART 1, SECTION 2-----
+       INY          NEXT REAL BYTE
+       LDA (BUF.PNTR),Y  GET BYTE FROM BUFFER
+       STA $27      SAVE HERE FOR LOWER 3 BITS
+       LSR          USE TOP 5 BITS
+       LSR
+       LSR
+       STA RWTS.BUFFER.1.2,X
+*---BUFFER PART 1, SECTION 3-----
+       INY          NEXT REAL BYTE
+       LDA (BUF.PNTR),Y  GET BYTE FROM BUFFER
+       STA $2A      SAVE FOR LOWER 3 BITS
+       LSR
+       LSR          USE TOP 5 BITS
+       LSR
+       STA RWTS.BUFFER.1.3,X
+*---BUFFER PART 1, SECTION 4-----
+       INY          NEXT REAL BYTE
+       LDA (BUF.PNTR),Y  GET BYTE FROM BUFFER
+       LSR          USE TOP 5 BITS
+       ROL $2A      BIT 0 INTO $2A
+       LSR
+       ROL $27      BIT 1 INTO $27
+       LSR
+       ROL $26      BIT 2 INTO $26
+       STA RWTS.BUFFER.1.4,X
+*---BUFFER PART 1, SECTION 5-----
+       INY          NEXT REAL BYTE
+       LDA (BUF.PNTR),Y  GET BYTE FROM BUFFER
+       LSR          USE TOP 5 BITS
+       ROL $2A      BIT 0 INTO $2A
+       LSR
+       ROL $27      BIT 1 INTO $27
+       LSR          HOLD BIT 2 IN CARRY-BIT
+       STA RWTS.BUFFER.1.5,X
+*---BUFFER PART 2, SECTION 0-----
+       LDA $26      APPEND BIT 2 TO $26
+       ROL
+       AND #$1F     5-BIT MASK
+       STA RWTS.BUFFER.2.1,X
+*---BUFFER PART 2, SECTION 1-----
+       LDA $27
+       AND #$1F
+       STA RWTS.BUFFER.2.2,X
+*---BUFFER PART 2, SECTION 2-----
+       LDA $2A
+       AND #$1F
+       STA RWTS.BUFFER.2.3,X
+*---------------------------------
+       INY          NEXT REAL BYTE
+       DEX          NEXT BYTE IN EACH SECTION
+       BPL .1       LOOP UNTIL EACH SECTION FULL
+*---------------------------------
+       LDA (BUF.PNTR),Y  GET LAST REAL BYTE
+       TAX
+       AND #7       USE LOWER 3 BITS
+       STA RWTS.BUFFER.2.4
+       TXA          NOW GET 5 UPPER BITS
+       LSR
+       LSR
+       LSR
+       STA RWTS.BUFFER.1.6
+       RTS
+ .PG
+*---------------------------------
+*      WRITE A SECTOR ON THE DISK FROM RWTS.BUFFER
+*---------------------------------
+WRITE.SECTOR
+       SEC          SET IN CASE OF ERROR RETURN
+       LDA Q6H,X    Q6 HIGH, Q7 LOW,
+       LDA Q7L,X    TO READ WRITE PROTECT STATUS
+       BMI .5       DISK IS WRITE PROTECTED
+       STX $27      SAVE SLOT #
+       STX $0678    HERE, TOO
+       LDA RWTS.BUFFER.2.1  FIRST NYBBLE OF DATA
+       STA $26      SAVE IT
+       LDA #$FF     SYNC BYTE
+       STA Q7H,X    Q6H,Q7H: (A) TO SHIFT REGISTER
+       ORA Q6L,X    Q6L,Q7H: WRITE ON DISK
+       PHA          TIME DELAYS
+       PLA
+       NOP
+       LDY #10      WRITE TEN MORE SYNC BYTES
+.1     ORA $26      WASTE TIME
+       JSR WRT2     WRITE (A) ON DISK
+       DEY
+       BNE .1       UNTIL 10 OF THEM
+       LDA #$D5     WRITE DATA HEADER
+       JSR WRT1
+       LDA #$AA
+       JSR WRT1
+       LDA #$AD
+       JSR WRT1
+       TYA          A=0
+       LDY #154     WRITE 154 NYBBLES
+       BNE .3       ...ALWAYS
+.2     LDA RWTS.BUFFER.2.1,Y  GET CURRENT NYBBLE AND
+.3     EOR RWTS.BUFFER.2.1-1,Y  EOR WITH PREVIOUS NYBBLE
+       TAX          USE AS OFFSET INTO TABLE
+       LDA NYBBLE.TABLE,X  MAP 5-BITS TO 8-BITS
+       LDX $27      GET SLOT AGAIN
+       STA Q6H,X    Q6H,Q7H: (A) TO SHIFT REGISTER
+       LDA Q6L,X    Q6L,Q7H: WRITE ON DISK
+       DEY
+       BNE .2       UNTIL ALL BYTES FROM THIS BLOCK DONE
+       LDA $26      GET FIRST NYBBLE
+       NOP
+.4     EOR RWTS.BUFFER.1.1,Y  EOR WITH CURRENT NYBBLE
+       TAX          INDEX INTO TABLE
+       LDA NYBBLE.TABLE,X  MAP TO 8-BIT VALUE
+       LDX $0678    SLOT # AGAIN
+       STA Q6H,X    Q6H,Q7L: (A) TO SHIFT REGISTER
+       LDA Q6L,X    Q6L,Q7H: WRITE ON DISK
+       LDA RWTS.BUFFER.1.1,Y  GET NYBBLE
+       INY
+       BNE .4       MORE TO DO
+       TAX          LAST NYBBLE
+       LDA NYBBLE.TABLE,X  MAP TO 8 BITS
+       LDX $27      SLOT # AGAIN
+       JSR WRT3     WRITE CHECK SUM ON DISK
+       LDA #$DE     WRITE TRAILER
+       JSR WRT1
+       LDA #$AA
+       JSR WRT1
+       LDA #$EB
+       JSR WRT1
+       LDA Q7L,X    Q7L
+.5     LDA Q6L,X    Q6L
+       RTS
+*---------------------------------
+WRT1   CLC          WAIT 2 CYCLES
+WRT2   PHA          WAIT 3 CYCLES
+       PLA          WAIT 4 CYCLES
+WRT3   STA Q6H,X    Q6H,Q7H: (A) TO SHIFT REGISTER
+       ORA Q6L,X    Q6L,Q7H: WRITE ON DISK
+       RTS
+ .PG
+*---------------------------------
+*      READ SECTOR INTO RWTS.BUFFER
+*---------------------------------
+READ.SECTOR
+       LDY #32      MUST FIND $D5 WITHIN 32 BYTES
+.1     DEY
+       BEQ ERROR.RETURN
+.2     LDA Q6L,X    READ SHIFT REGISTER
+       BPL .2       WAIT FOR FULL BYTE
+.3     EOR #$D5     SEE IF FOUND $D5
+       BNE .1       NOT YET
+       NOP          DELAY BEFORE NEXT READ
+.4     LDA Q6L,X    READ SHIFT REGISTER
+       BPL .4       WAIT FOR FULL BYTE
+       CMP #$AA     SEE IF $AA
+       BNE .3       NO
+       LDY #154     BYTE COUNT FOR LATER
+.5     LDA Q6L,X    READ SHIFT REGISTER
+       BPL .5       WAIT FOR FULL BYTE
+       CMP #$AD     IS IT $AD?
+       BNE .3       NO
+*---------------------------------
+       LDA #0       BEGIN CHECKSUM
+.6     DEY
+       STY $26
+.7     LDY Q6L,X    READ SHIFT REGISTER
+       BPL .7       WAIT FOR FULL BYTE
+       EOR BYTE.TABLE,Y  CONVERT TO NYBBLE
+       LDY $26      BUFFER INDEX
+       STA RWTS.BUFFER.2.1,Y
+       BNE .6
+.8     STY $26
+.9     LDY Q6L,X    READ SHIFT REGISTER
+       BPL .9       WAIT FOR FULL BYTE
+       EOR BYTE.TABLE,Y  CONVERT TO NYBBLE
+       LDY $26
+       STA RWTS.BUFFER.1.1,Y
+       INY
+       BNE .8
+.10    LDY Q6L,X    READ CHECKSUM
+       BPL .10
+       CMP BYTE.TABLE,Y
+       BNE ERROR.RETURN
+.11    LDA Q6L,X    READ TRAILER
+       BPL .11
+       CMP #$DE
+       BNE ERROR.RETURN
+       NOP
+.12    LDA Q6L,X
+       BPL .12
+       CMP #$AA
+       BEQ GOOD.RETURN
+ERROR.RETURN
+       SEC
+       RTS
+ .PG
+*---------------------------------
+*      READ ADDRESS
+*---------------------------------
+READ.ADDRESS
+       LDY #$F8     TRY 1800 TIMES (FROM $F8F8 TO $10000)
+       STY $26
+.1     INY
+       BNE .2
+       INC $26
+       BEQ ERROR.RETURN
+.2     LDA Q6L,X    READ SHIFT REGISTER
+       BPL .2       WAIT FOR FULL BYTE
+.3     CMP #$D5     SEE IF $D5
+       BNE .1       NO
+       NOP          DELAY
+.4     LDA Q6L,X    READ SHIFT REGISTER
+       BPL .4       WAIT FOR FULL BYTE
+       CMP #$AA     SEE IF $AA
+       BNE .3       NO
+       LDY #3       READ 3 BYTES LATER
+.5     LDA Q6L,X    READ SHIFT REGISTER
+       BPL .5
+       CMP #$B5     SEE IF $B5
+       BNE .3       NO
+       LDA #0       START CHECK SUM
+.6     STA $27
+.7     LDA Q6L,X    READ REGISTER
+       BPL .7
+       ROL
+       STA $26
+.8     LDA Q6L,X    READ REGISTER
+       BPL .8       WAIT FOR FULL BYTE
+       AND $26      MERGE THE NYBBLES
+       STA $2C,Y    $2C -- CHECK SUM
+       EOR $27      $2D -- SECTOR
+       DEY          $2E -- TRACK
+       BPL .6       $2F -- VOLUME
+       TAY          TEST CHECK SUM
+       BNE ERROR.RETURN
+.9     LDA Q6L,X    READ REGISTER
+       BPL .9       WAIT FOR FULL BYTE
+       CMP #$DE     TEST FOR VALID TRAILER
+       BNE ERROR.RETURN
+       NOP
+.10    LDA Q6L,X    READ REGISTER
+       BPL .10
+       CMP #$AA
+       BNE ERROR.RETURN
+GOOD.RETURN
+       CLC
+       RTS
+       .PG
+*---------------------------------
+*      CONVERT 410 5-BIT NYBBLES TO 256 BYTES
+*      (THEY ARE NOW LEFT-JUSTIFIED IN RWTS.BUFFER)
+*---------------------------------
+POST.NYBBLE
+       LDX #50      51 BYTES PER SECTION
+       LDY #0
+*---BUFFER PART 1, SECTION 1-----
+.1     LDA RWTS.BUFFER.2.1,X
+       LSR
+       LSR          RIGHT-JUSTIFY THE NYBBLE
+       LSR
+       STA $27      SAVE BIT 0
+       LSR
+       STA $26      SAVE BIT 1
+       LSR          BITS 2-4
+       ORA RWTS.BUFFER.1.1,X
+       STA (BUF.PNTR),Y  STORE IN BUFFER
+*---BUFFER PART 1, SECTION 2-----
+       INY          NEXT BYTE
+       LDA RWTS.BUFFER.2.2,X
+       LSR          RIGHT-JUSTIFY THE NYBBLE
+       LSR
+       LSR
+       LSR          BIT 0 INTO CARRY
+       ROL $27      AND SAVE HERE
+       LSR          BIT 1 INTO CARRY
+       ROL $26      AND SAVE HERE
+       ORA RWTS.BUFFER.1.2,X
+       STA (BUF.PNTR),Y  STORE THE BYTE
+*---BUFFER PART 1, SECTION 3-----
+       INY          NEXT BYTE
+       LDA RWTS.BUFFER.2.3,X
+       LSR          RIGHT-JUSTIFY THE NYBBLE
+       LSR
+       LSR
+       LSR          BIT 0 INTO CARRY
+       ROL $27      AND SAVE HERE
+       LSR          BIT 1 INTO CARRY
+       ROL $26      AND SAVE HERE
+       ORA RWTS.BUFFER.1.3,X
+       STA (BUF.PNTR),Y  STORE THE BYTE
+*---BUFFER PART1, SECTION 4-----
+       INY          NEXT BYTE
+       LDA $26      USE THE 3 BITS SAVED HERE
+       AND #7       MAKE SURE ONLY 3 BITS
+       ORA RWTS.BUFFER.1.4,X
+       STA (BUF.PNTR),Y  STORE THE BYTE
+*---BUFFER PART1, SECTION 5-----
+       INY          NEXT BYTE
+       LDA $27      USE THE 3 BITS SAVED HERE
+       AND #7       MAKE SURE ONLY 3 BITS
+       ORA RWTS.BUFFER.1.5,X
+       STA (BUF.PNTR),Y  STORE THE BYTE
+*---------------------------------
+       INY          NEXT BYTE
+       DEX
+       BPL .1
+*---------------------------------
+       LDA RWTS.BUFFER.2.4  GET THE LAST BYTE
+       LSR          RIGHT JUSTIFY
+       LSR
+       LSR
+       ORA RWTS.BUFFER.1.6
+       STA (BUF.PNTR),Y  STORE THE LAST BYTE
+       RTS
+ .PG
+*---------------------------------
+*      TRACK SEEK
+*---------------------------------
+SEEK.TRACK.ABSOLUTE
+       STX $2B      CURRENT SLOT*16
+       STA $2A      SAVE TRACK #
+       CMP CURRENT.TRACK  COMPARE TO CURRENT TRACK
+       BEQ .9       ALREADY THERE
+       LDA #0
+       STA $26      # OF STEPS SO FAR
+.1     LDA CURRENT.TRACK  CURRENT TRACK NUMBER
+       STA $27
+       SEC
+       SBC $2A      DESIRED TRACK
+       BEQ .6       WE HAVE ARRIVED
+       BCS .2       CURRENT > DESIRED
+       EOR #$FF     CURRENT < DESIRED
+       INC CURRENT.TRACK  INCREMENT CURRENT
+       BCC .3       ...ALWAYS
+.2     ADC #$FE     CARRY SET, SO A=A-1
+       DEC CURRENT.TRACK  DECREMENT CURRENT TRACK
+.3     CMP $26      GET MINIMUM OF:
+       BCC .4          1. # OF TRACKS TO MOVE LESS 1
+       LDA $26         2. # OF ITERATIONS SO FAR
+.4     CMP #12         3. ELEVEN
+       BCS .5
+       TAY
+.5     SEC          TURN PHASE ON
+       JSR .7
+       LDA ONTBL,Y  GET DELAY TIME
+       JSR DLY100   DELAY 100*A MICROSECONDS
+       LDA $27      TRACK NUMBER
+       CLC          TURN PHASE OFF
+       JSR .8
+       LDA OFFTBL,Y
+       JSR DLY100
+       INC $26      # OF STEPS SO FAR
+       BNE .1       ...ALWAYS
+*---------------------------------
+.6     JSR DLY100
+       CLC          TURN PHASE OFF
+.7     LDA CURRENT.TRACK
+.8     AND #3       ONLY KEEP LOW-ORDER 2 BITS
+       ROL          (0000 0XX0)
+       ORA $2B      (0SSS 0XX0) MERGE SLOT
+       TAX          USE AS INDEX FOR PHASE-OFF
+       LDA PHOFF,X  PHASE-OFF
+       LDX $2B
+.9     RTS
+*---------------------------------
+*      SHORT DELAY SUBROUTINE
+*---------------------------------
+DLY100 LDX #17      100*A MICROSECONDS
+.1     DEX
+       BNE .1
+       INC $46
+       BNE .2
+       INC $47
+.2     SEC
+       SBC #1
+       BNE DLY100
+       RTS
+*---------------------------------
+*      DELAY TIMES FOR STEPPING MOTOR
+*---------------------------------
+ONTBL  .HS 01302824201E1D1C1C1C1C1C
+OFFTBL .HS 702C26221F1E1D1C1C1C1C1C
+       .HS 1C1C1C1C
+       .PG
+*---------------------------------
+*      BYTE TABLE
+*---------------------------------
+BYTE.TABLE .EQ *-$A8
+       .HS 00000000010810180203040506202830
+       .HS 070938400A4850580B0C0D0E0F111213
+       .HS 14151617191A1B1C1D1E212223246068
+       .HS 2526707827808890292A2B2C2D2E2F31
+       .HS 323398A034A8B0B8353637393AC0C8D0
+       .HS 3B3CD8E03EE8F0F8
+*---------------------------------
+*      410-BYTE BUFFER FOR NYBBLES
+*---------------------------------
+RWTS.BUFFER.1.1 .BS 51  $BB00 - BB32
+RWTS.BUFFER.1.2 .BS 51  $BB33 - BB65
+RWTS.BUFFER.1.3 .BS 51  $BB66 - BB98
+RWTS.BUFFER.1.4 .BS 51  $BB99 - BBCB
+RWTS.BUFFER.1.5 .BS 51  $BBCC - BBFE
+RWTS.BUFFER.1.6 .BS 1   $BBFF
+RWTS.BUFFER.2.1 .BS 51  $BC00 - BC32
+RWTS.BUFFER.2.2 .BS 51  $BC33 - BC65
+RWTS.BUFFER.2.3 .BS 51  $BC66 -BC98
+RWTS.BUFFER.2.4 .BS 1   $BC99
+*---------------------------------
+*      NYBBLE TABLE
+*---------------------------------
+NYBBLE.TABLE
+       .HS ABADAEAFB5B6B7BABBBDBEBF
+       .HS D6D7DADBDDDEDFEAEBEDEEEF
+       .HS F5F6F7FAFBFDFEFF
+*---------------------------------
+*      $BCBA THRU $BCFF IS NOT USED BY DOS 3.2.1
+*---------------------------------
+       .PG
+

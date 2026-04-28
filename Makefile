@@ -1,6 +1,6 @@
 
 PRGS=
-ASM=test1
+ASM=test1 headin headout
 
 all: $(PRGS) $(ASM)
 
@@ -11,5 +11,6 @@ ${PRGS}: % : %.bas
 	petcat -w40 -o $@ $<
 
 clean:
-	rm -f ${ASM} ${PRGS}
+	rm -f ${ASM} ${PRGS} 
+	rm -f *.lab *.lst
 
