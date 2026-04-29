@@ -19,7 +19,11 @@ link	.word 0
 
 	jsr upet_init
 
+	jsr ALL_OFF
+
 	jsr ENTRY
+
+	jsr ALL_OFF
 
 	cli
 
@@ -72,6 +76,18 @@ sector        =    $4b	;$3d    ;{addr/1}   ;sector to read
 found_track   =    $4c	;$40    ;{addr/1}   ;track found                                     
 track         =    $ed	;$41    ;{addr/1}   ;track to read                                   
 
+ALL_OFF .(                       
+        ldx #0                   
+        ; switch off all phases  
+        lda IWM_PH0_OFF,x        
+        lda IWM_PH0_OFF+2,x      
+        lda IWM_PH0_OFF+4,x      
+        lda IWM_PH0_OFF+6,x      
+        ; switch off motor       
+        lda IWM_MOTOR_OFF,x      
+        rts                      
+        .)                       
+
 	.dsb $0500-*
 
 ENTRY	.(
@@ -93,7 +109,7 @@ seek_loop
 	tya
 	and #$03
 	asl
-	ora slot_index
+	;ora slot_index
 	tax
 	lda IWM_PH0_ON,x
 	lda #DELAY

@@ -1,6 +1,6 @@
 
-;DELAY	=86
-DELAY	=200
+DELAY	=86
+;DELAY	=200
 
 IO	=$9000
 IDX	=$f0
@@ -19,7 +19,14 @@ link	.word 0
 
 	jsr upet_init
 
+	jsr ALL_OFF
+
 	jsr ENTRY
+
+	lda #DELAY
+	jsr MON_WAIT
+
+	jsr ALL_OFF
 
 	cli
 	rts
@@ -71,34 +78,61 @@ sector        =    $4b	;$3d    ;{addr/1}   ;sector to read
 found_track   =    $4c	;$40    ;{addr/1}   ;track found                                     
 track         =    $ed	;$41    ;{addr/1}   ;track to read                                   
 
+ALL_OFF .(                       
+	ldx #0
+        ; switch off all phases  
+        lda IWM_PH0_OFF,x        
+        lda IWM_PH0_OFF+2,x      
+        lda IWM_PH0_OFF+4,x      
+        lda IWM_PH0_OFF+6,x      
+        ; switch off motor       
+        lda IWM_MOTOR_OFF,x      
+        rts                      
+        .)                       
+
 	.dsb $0500-*
 
 ENTRY	.(
 	; slot index 0
-	lda #0
-	sta slot_index
-	tax
+	ldx #0
+	stx slot_index
+;	nop
 
 	; init drive
 	lda IWM_Q7_OFF,x
 	lda IWM_Q6_OFF,x
 	lda IWM_SEL_DRIVE_1,x
 	lda IWM_MOTOR_ON,x
-
+;nop
 	; move head inwards 
 	ldy #0		
+;nop
 seek_loop
+nop	; fixes
 	lda IWM_PH0_OFF,x	; turn phase off
+;nop	; does not fix it
 	tya
+;nop	; does not fix it
 	and #$03
+;nop	; does not fix it
 	asl
-	ora slot_index
+;pha
+;sta $8001
+;lda slot_index
+;sta $8000
+;pla
+	;nop
+	;ora slot_index
 	tax
+nop	; this single nop can be added or removed without breaking
+	; but adding more nops breaks it again
 	lda IWM_PH0_ON,x
 	lda #DELAY
 	jsr MON_WAIT
+;nop
 	iny
 	cpy #80
+;nop
 	bcc seek_loop
 
 	lda #DELAY
