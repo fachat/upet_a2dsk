@@ -2,9 +2,59 @@
 ; from: https://htmlpreview.github.io/?https://github.com/Michaelangel007/apple2_dos33/blob/master/dos33.html#Listing
 
 ; original apple 
-CSSTV	=$2c
 T0	=$26
-TRKN	=$2a
+
+COUNT	=$26
+LAST	=$26
+CSUM	=$27
+CSSTV	=$2c
+
+NSECT	=$3f
+
+AA	=$3e	; timing constant
+NVOL	=$41	; volume number
+TRK	=$44
+NSYNC	=$45
+
+;*   ---- MSWAIT ----   *
+MONTIMEL    = $46         ;MOTON-ON TIME
+MONTIMEH    = $47         ;COUNTERS.
+
+;************************
+;*                      *
+;*    ---WRITE16---     *
+;*                      *
+;*  USES NBUF1, NBUF2,  *
+;*  AND 64-BYTE TABLE   *
+;*       'NIBL'.        *
+;*                      *
+;************************
+WTEMP       = $26         ;TEMP FOR DATA AT NBUF2,0.
+SLOTZ       = $27         ;SLOTNUM IN Z-PAG LOC.           ; === Page 26 ===
+SLOTABS     = $678        ;SLOTNUM IN NON-ZPAG LOC.
+;*
+;************************
+;*                      *
+;*     ----READ16-----  *
+;*  (16-SECTOR FORMAT)  *
+;*                      *
+;*   USES NBUF1,NBUF2.  *
+;* USES LAST 106 BYTES  *
+;* OF A DATA PAGE FOR   *
+;* SIGNIFICANT BYTES    *
+;* OF DNIBL16 TABLE.    *
+;*                      *
+;************************
+IDX         = $26         ;INDEX INTO (BUF).
+ 
+; ---- SEEK
+TRKCNT      = $26         ;HALFTRKS MOVED COUNT.
+PRIOR       = $27         ;PRIOR HALFTRACK.
+TRKN        = $2A         ;DESIRED TRACK.
+SLOTTEMP    = $2B         ;SLOT NUM TIMES $10.
+CRKTRK      = $478        ;CURRENT TRACK ON ENTRY.         ; "Current Track" Drive 1, Why is this defined AGAIN? DRV1TRK
+
+BUF	=$3e
 
 ; vars
 SEKCNT	.byt 0
@@ -17,8 +67,12 @@ IBVMME	=$20
 IBWPER	=$10	; write protect err
 
 ; IO
+PHASEOFF=$90f0
+PHASEON	=$90f1
 Q6L	=$90fc
+Q6H	=$90fd
 Q7L	=$90fe
+Q7H	=$90ff
 
 
 ;==================================================================================
@@ -205,6 +259,9 @@ TL12        = TL11+TD     ;LATENCY POSITION
 ;*                        *
 ;**************************
 ;            PAGE                                            ; === Page 119 ===
+
+	.align 256
+
 RWTS        STY IOBPL       ;UPON ENTRY, A&Y POINT AT THE
             STA IOBPH       ;I/O CONTROL BLOCK (IOB)
 ;        LST OFF
@@ -655,4 +712,1072 @@ SETTRK2     BIT DRIVNO                                      ; unused label
             BPL SETRTS
 ONDRV1      STA DRV1TRK,Y
 SETRTS      RTS
+
+;************************************************************************
+
+;=== MSWAITR - Microsecond wait routine, Page 97, T0S3 @ $FD - T0S6 @ $55, $B9FD .. $BC55 ===
+
+;                SBTL '16-SECTOR MSWAIT'
+;**************************
+;*   MSWAIT SUBROUTINE    *
+;**************************
+;*                        *
+;*  DELAYS A SPECIFIED    *
+;*   NUMBER OF 100 USEC   *
+;*   INTERVALS FOR MOTOR  *
+;*   ON TIMING.           *
+;*                        *
+;*   ---- ON ENTRY ----   *
+;*  A-REG: HOLDS NUMBER   *
+;*        OF 100 USEC     *
+;*        INTERVALS TO    *
+;*        DELAY.          *
+;*                        *
+;*   ---- ON EXIT -----   *
+;*  A-REG: HOLDS $00.     *
+;*  X-REG: HOLDS $00.     *
+;*  Y-REG: UNCHANGED.     *
+;*  CARRY: SET.           *
+;*                        *
+;*  MONTIMEL, MONTIMEH    *
+;*   ARE INCREMENTED ONCE *
+;*   PER 100 USEC INTERVAL*
+;*   FOR MOTON ON TIMING. *
+;*    ---- ASSUMES ----   *
+;* 1 USEC CYCLE TIME      *
+;**************************
+;        DS 3,0              ;AVOID PAGE BOUNDARY CROSSING...; T0S3 @ $FC wastes 3 bytes
+MSWAIT      LDX #$11                                        ; === T0S4 === *sigh* Typical bloated code ...
+MSW1        DEX             ;DELAY 86 USEC.                  ; ... should just adjust algorithm timing instead!
+            BNE MSW1
+            INC MONTIMEL
+            BNE MSW2        ; DOUBLE-BYTE
+            INC MONTIMEH    ;INCREMENT.
+MSW2        SEC
+            SBC #$1         ;DONE 'N' INTERVALS?
+            BNE MSWAIT      ;(A-REG COUNTS)
+            RTS
+;AEC1        EQU *           ;TELL RELOCATOR WHERE CORE ENDS
+
+;**************************
+;*  PHASE ON-, OFF-TIME   *
+;*   TABLES IN 100-USEC   *
+;*   INTERVALS. (SEEK)    *
+;**************************
+ONTABLE     .byt 1,$30,$28                                   ; See RDADSEK, Page 108, Line #TODO
+            .byt $24,$20,$1E
+            .byt $1D,$1C,$1C
+            .byt $1C,$1C,$1C
+OFFTABLE    .byt $70,$2C,$26                                 ; See RDADSEK Page 109, Line #183
+            .byt $22,$1F,$1E
+            .byt $1D,$1C,$1C
+            .byt $1C,$1C,$1C                                 ; === Page 98 ===
+;            SBTL '16-SECTOR NYBBLE TABLES'
+;***************************
+;*                         *
+;*     6-BIT TO 7-BIT      *
+;*  NIBL CONVERSION TABLE  *
+;*                         *
+;***************************
+;*                         *
+;*   CODES WITH MORE THAN  *
+;*   ONE PAIR OF ADJACENT  *
+;*    ZEROES OR WITH NO    *
+;*   ADJACENT ONES (EXCEPT *
+;*     B7) ARE EXCLUDED.   *
+;*                         *
+;* THIS TABLE MAY *NOT*    *
+;* CROSS A PAGE BOUNDARY!  *
+;*                         *
+;***************************
+NIBL        .byt $96,$97,$9A                                 ; /sarcasm, Gee if only
+            .byt $9B,$9D,$9E                                 ; there was a HEX pseudo-mnemonic
+            .byt $9F,$A6,$A7                                 ; so we could group these in 4 bytes ...
+            .byt $AB,$AC,$AD                                 ; ... maybe one day. :)
+            .byt $AE,$AF,$B2                                 ; NOTE: Also see NIBL and PD2
+            .byt $B3,$B4,$B5
+            .byt $B6,$B7,$B9
+            .byt $BA,$BB,$BC
+            .byt $BD,$BE,$BF
+            .byt $CB,$CD,$CE
+            .byt $CF,$D3,$D6
+            .byt $D7,$D9,$DA
+            .byt $DB,$DC,$DD
+            .byt $DE,$DF,$E5
+            .byt $E6,$E7,$E9
+            .byt $EA,$EB,$EC
+            .byt $ED,$EE,$EF
+            .byt $F2,$F3,$F4
+            .byt $F5,$F6,$F7
+            .byt $F9,$FA,$FB
+            .byt $FC,$FD,$FE
+            .byt $FF
+  
+;==================================================================================
+
+;=== PRENIBL - Prenibblize sector data for writing, Page 104, T0S2, $B800 .. $B829 ===
+
+;            SBTL '16-SECTOR PRENIBLIZE'
+;****************************
+;*                          *
+;*    PRENIBLIZE SUBR       *
+;*   (16-SECTOR FORMAT)     *
+;*                          *
+;****************************
+;*                          *
+;*  CONVERTS 256 BYTES OF   *
+;*  USER DATA IN (BUF),0    *
+;*  TO (BUF),255 INTO 342   *
+;*  6-BIT NIBLS (00ABCDEF)  *
+;*  IN NBUF1 AND NBUF2.     *
+;*                          *
+;*    ---- ON ENTRY ----    *
+;*                          *
+;*  BUF IS 2-BYTE POINTER   *
+;*    TO 256 BYTES OF USER  *
+;*    DATA.                 *
+;*                          *
+;*    ---- ON EXIT -----    *
+;*                          *
+;*  A-REG UNCERTAIN.        *
+;*  X-REG HOLDS $FF.        *
+;*  Y-REG HOLDS $FF.        *
+;*  CARRY SET.              *
+;*                          *
+;* NBUF1 AND NBUF2 CONTAIN  *
+;*   6-BIT NIBLS OF FORM    *
+;*   00ABCDEF.              *
+;*                          *
+;****************************
+PRENIB16    LDX #$0         ;START NBUF2 INDEX. CHANGED BY WOZ
+            LDY #2          ;START USER BUF INDEX. CHANGED BY WOZ.
+PRENIB1     DEY             ;NEXT USER BYTE.
+            LDA (BUF),Y
+            LSR             ;SHIFT TWO BITS OF
+            ROL NBUF2,X     ;CURRENT USER BYTE
+            LSR             ;INTO CURRENT NBUF2
+            ROL NBUF2,X     ;BYTE.
+            STA NBUF1,Y     ;(6 BITS LEFT).
+            INX             ;FROM 0 TO $55.
+            CPX #$56
+            BCC PRENIB1     ;BR IF NO WRAPAROUND.
+            LDX #0          ;RESET NBUF2 INDEX.
+            TYA             ;USER BUF INDEX.
+            BNE PRENIB1     ;(DONE IF ZERO)
+            LDX #$55        ;NBUF2 IDX $55 TO 0.
+PRENIB2     LDA NBUF2,X
+            AND #$3F        ;STRIP EACH BYTE
+            STA NBUF2,X     ;OF NBUF2 TO 6 BITS.
+            DEX
+            BPL PRENIB2     ;LOOP UNTIL X NEG.              ; === Page 105 ===
+            RTS             ;RETURN.                        ; o7 Captain Obvious
+
+;***********************************************************************
+
+;=== WRITRTN - Write Routine, Page 137, T0S2, $B82A .. $B8C1 ===
+
+;                SBTL '16-SECTOR WRITE'
+;************************
+;*                      *
+;*      WRITE SUBR      *
+;*  (16-SECTOR FORMAT)  *
+;*                      *
+;************************
+;*                      *
+;*   WRITES DATA FROM   *
+;*    NBUF1 AND NBUF2   *
+;*   CONVERTING 6-BIT   *
+;*    TO 7-BIT NIBLS    *
+;*   VIA 'NIBL' TABLE.  *
+;*                      *
+;*  FIRST NBUF2,        *
+;*      HIGH TO LOW.    *
+;*  THEN NBUF1,         *
+;*      LOW TO HIGH.    *
+;*                      *
+;*  ---- ON ENTRY ----  *
+;*                      *
+;*   X-REG: SLOTNUM     *
+;*        TIMES $10.    *
+;*                      *
+;*   NBUF1 AND NBUF2    *
+;*    HOLD NIBLS FROM   *
+;*    PRENIBL SUBR.     *
+;*    (00ABCDEF)        *
+;*                      *
+;*  ---- ON EXIT -----  *
+;*                      *
+;*  CARRY SET IF ERROR. *
+;*   (W PROT VIOLATION) *
+;*                      *
+;*  IF NO ERROR:        *
+;*                      *
+;*    A-REG UNCERTAIN.  *
+;*    X-REG UNCHANGED.  *
+;*    Y-REG HOLDS $00.  *
+;*    CARRY CLEAR.      *
+;*                      *
+;*    SLOTABS, SLOTZ,   *
+;*     AND WTEMP USED.  *
+;*                      *
+;*  ---- ASSUMES ----   *
+;*                      *
+;*  1 USEC CYCLE TIME   *
+;*                      *
+;************************
+WRITE16     SEC             ;ANTICIPATE WPROT ERR.          ; === Reloc @ $B82A ===
+            STX SLOTZ       ;FOR ZERO PAGE ACCESS.
+            STX SLOTABS     ;FOR NON-ZERO PAGE.
+            LDA Q6H,X
+            LDA Q7L,X       ;SENSE WPROT FLAG.              ; === Page 138 ===
+            BMI WEXIT       ;IF HIGH, THEN ERR.             ; v
+            LDA NBUF2
+            STA WTEMP       ;FOR ZERO-PAGE ACCESS.
+            LDA #$FF        ;SYNC DATA
+            STA Q7H,X       ;(5) WRITE 1ST NIBL.
+            ORA Q6L,X       ;(4)
+            PHA             ;(3)
+            PLA             ;(4) CRITICAL TIMING!
+            NOP             ;(2)
+            LDY #4          ;(2)  FOR 5 NIBLS.
+WSYNC       PHA             ;(3) EXACT TIMING               ; --- Sync FF ---
+            PLA             ;(4) EXACT TIMING
+            JSR WNIBL7      ;(13,9,6)  WRITE SYNC
+            DEY             ;(2)
+            BNE WSYNC       ;(2*)  MUST NOT  CROSS PAGE!    ; ^
+            LDA #$D5        ;(2)  1ST DATA MARK.            ; --- Data Header D5 AA AD ---
+            JSR WNIBL9      ;(15,9,6)
+            LDA #$AA        ;(2)  2ND DATA MARK.
+            JSR WNIBL9      ;(15,9,6)
+            LDA #$AD        ;(2)  3RD DATA MARK.
+            JSR WNIBL9      ;(15,9,6)
+            TYA             ;(2) CLEAR CHECKSUM
+            LDY #$56        ;(2) NBUF2 INDEX.
+            BNE WDATA1      ;(3)  ALWAYS.  NO PAGE CROSS!!  ; v
+WDATA0      LDA NBUF2,Y     ;(4)  PRIOR 6-BIT NIBL.
+WDATA1      EOR NBUF2-1,Y   ;(5)  XOR WITH CURRENT.
+;*   (NBUF2 MUST BE ON PAGE BOUNDARY FOR TIMING!!)
+            TAX             ;(2)  INDEX To 7-BIT NIBL
+            LDA NIBL,X      ;(4)  MUST NOT CROSS PAGE!
+            LDX SLOTZ       ;(3)  CRITICAL TIMING!
+            STA Q6H,X       ;(5)  WRITE NIBL.
+            LDA Q6L,X       ;(4)
+            DEY             ;(2)  NEXT NIBL.
+            BNE WDATA0      ;(2*) MUST NOT CROSS PAGE!      ; ^
+            LDA WTEMP       ;(3) PRIOR NIBL FROM BUF6.
+            NOP             ;(2)  CRITICAL TIMING.
+WDATA2      EOR NBUF1,Y     ;(5)  XOR WITH CURRENT.
+            TAX             ;(2)
+            LDA NIBL,X      ;(4)
+            LDX SLOTABS     ;(4) TIMING CRITICAL
+            STA Q6H,X       ;(5) WRITE NIBL.
+            LDA Q6L,X       ;(4)
+            LDA NBUF1,Y     ;(4)  PRIOR 6-BIT NIBL.
+            INY             ;(2)NEXT NBUF1 NIBL.
+            BNE WDATA2      ;(2*) MUST NOT CROSS PAGE!      ; ^
+            TAX             ;(2)
+            LDA NIBL,X      ;(4)  INDEX TO 7-BIT NIBL
+            LDX SLOTZ       ;(3)
+            JSR WNIBL       ;(6,9,6)  WRITE CHKSUM
+            LDA #$DE        ;(2)  DM4, BIT SLIP MARK.       ; magic number TODO
+            JSR WNIBL9      ;(15,9,6)    WRITE IT.
+            LDA #$AA        ;(2)  DM5, BIT SLIP MARK.
+            JSR WNIBL9      ;(15,9,6)    WRITE IT.
+            LDA #$EB        ;(2)  DM6, BIT SLIP MARK.
+            JSR WNIBL9      ;(15,9,6)    WRITE IT.
+            LDA #$FF        ;(2) TURN-OFF BYTE.
+            JSR WNIBL9      ;(15,9,9) WRITE IT.             ; TODO: 15,9,6??
+            LDA Q7L,X       ;OUT OF WRITE MODE.
+WEXIT       LDA Q6L,X       ;TO READ MODE.
+            RTS             ;RETURN FROM WRITE.
+;*****************************
+;*                           *
+;*   7-BIT NIBL WRITE SUBRS  *                               ; === WRITRTN, Page 139 ===
+;*                           *
+;*   A-REG OR'D PRIOR EXIT   *
+;*       CARRY CLEARED       *
+;*                           *
+;*****************************
+WNIBL9      CLC             ; (2) 9 CYCLES, THEN WRITE.
+WNIBL7      PHA             ; (3) 7 CYCLES, THEN WRITE.
+            PLA             ; (4)
+WNIBL       STA Q6H,X       ; (5) NIBL WRITE SUB.
+            ORA Q6L,X       ; (4) CLOBBERS ACC, NOT CARRY
+            RTS
+
+;=== POSTNRD - Post Nibbilize Read, Page 101, T0S2 @ $C2 - T0S3 @ $43, $B8C2 .. $B943 ===
+
+;            SBTL '16-SECTOR POSTNIBLIZE'
+;***************************
+;*                         *
+;*    POSTNIBLIZE SUBR     *
+;*    16-SECTOR FORMAT     *
+;*                         *
+;***************************
+;*                         *
+;*  CONVERTS 6-BIT NIBLS   *
+;*  OF FORM 00ABCDEF IN    *
+;*  NBUF1 AND NBUF2 INTO   *
+;*  256 BYTES OF USER      *
+;*  DATA IN BUF.           *
+;*                         *
+;*   ---- ON ENTRY ----    *
+;*                         *
+;*  X-REG: HOLDS SLOTNUM   *
+;*            TIMES $10.   *
+;*                         *
+;*  BUF IS 2-BYTE POINTER  *
+;*    TO 256 BYTES OF USER *
+;*    DATA TO BE CONVERTED *
+;*    TO 6-BIT NIBLS IN    *
+;*    NBUF1 AND NBUF2      *
+;*    PRIOR TO WRITE.      *
+;*                         *
+;*  T0 CONTAINS BYTE COUNT *
+;*    CODE0 = 256 BYTES    *
+;*    CODE1 =   1 BYTE     *
+;*    CODE2 =   2 BYTER    *
+;*                         *
+;*    CODE 255=255 BYTES   *
+;*                         *
+;*   ---- ON EXIT -----    *
+;*                         *
+;*  A-REG UNCERTAIN.       *
+;*  Y-REG SAME AS T0.      *
+;*  X-REG UNCERTAIN.       *
+;*  CARRY SET.             *
+;*                         *
+;*  6-BIT NIBLS OF FORM    *
+;*    00ABCDEF IN NBUF1    *
+;*    AND NBUF2.           *
+;*      (342 NIBLS)        *
+;***************************
+POSTNB16    LDY #$0         ; USER DATA BUF IDX.            ; T0S2 TODO
+POST1       LDX #$56        ; INIT NBUF2 INDEX.
+POST2       DEX             ; NBUF IDX $55 TO $0
+            BMI POST1       ; WRAPAROUND IF NEG.            ;↑
+            LDA NBUF1,Y
+            LSR NBUF2,X     ; SHIFT 2 BITS FROM
+            ROL             ; CURRENT NBUF2 NIBL
+            LSR NBUF2,X     ; INTO CURRENT NBUF1
+            ROL             ;NIBL.                           ; === Page 102 ===
+            STA (BUF),Y     ;BYTE OF USER DATA.
+            INY             ;NEXT USER BYTE.
+            CPY T0          ;DONE IF EQUAL T0.
+            BNE POST2                                       ; ^
+            RTS             ;RETURN.
+;                SBTL '16-SECTOR READ'
+;**************************
+;*                        *
+;*     READ SUBROUTINE    *
+;*   (16-SECTOR FORMAT)   *
+;*                        *
+;**************************
+;*                        *
+;*    READS 6-BIT NIBLS   *
+;*     (00ABCDEF) INTO    *
+;*     NBUF1 and NBUF2    *
+;*    CONVERTING 7-BIT    *
+;*     NIBLS TO 7-BIT     *
+;*    VIA 'DNIBL' TABLE   *
+;*                        *
+;*  FIRST READS NBUF2     *
+;*           HIGH TO LOW  *
+;*  THEN READS NBUF1      *
+;*           LOW TO HIGH  *
+;*                        *
+;*   ---- ON ENTRY ----   *
+;*                        *
+;*  X-REG: SLOTNUM        *
+;*         TIMES $10.     *
+;*                        *
+;*  READ MODE (Q6L, Q7L)  *
+;*                        *
+;*   ---- ON EXIT -----   *
+;*                        *
+;*  CARRY SET IF ERROR    *
+;*                        *
+;*  IF NO ERROR:          *
+;*     A-REG HOLDS $AA.   *
+;*     X-REG UNCHANGED.   *
+;*     Y-REG HOLDS $00.   *
+;*     CARRY CLEAR.       *
+;*                        *
+;*     NBUF1 AND NBUF2    *
+;*       HOLD 6-BIT NIBLS *
+;*       (00ABCDEF)       *
+;*                        *
+;*     USES TEMP 'IDX'.   *
+;*                        *
+;*  ---- CAUTION -----    *
+;*                        *
+;*        OBSERVE         *
+;*    'NO PAGE CROSS'     *
+;*      WARNIGNS ON       *
+;*    SOME BRANCHES!!     *
+;*                        *
+;*   ---- ASSUMES ----    *
+;*                        *
+;*   1 USEC CYCLE TIME    *
+;*                        *
+;**************************
+READ16      LDY #$20        ;'MUST FIND' COUNT.
+RSYNC       DEY             ;IF CAN'T FIND MARKS
+            BEQ RDERR       ;THEN EXIT WITH CARRY SET       ; === Page 103 ===
+READ1       LDA Q6L,X       ;READ NIBL.
+            BPL READ1       ;*** NO PAGE CROSS! ***
+RSYNC1      EOR #$D5        ;DATA MARK 1?
+            BNE RSYNC       ;LOOP IF NOT.
+            NOP             ;DELAY BETWEEN NIBLS.
+READ2       LDA Q6L,X
+            BPL READ2       ;*** NO PAGE CROSS! ***
+            CMP #$AA        ;DATA MARK 2?
+            BNE RSYNC1      ;(IF NOT, IS IT DM1?)            ;              NUM_6N2_NIBBLES = 342
+            LDY #$56        ;INIT NBUF2 INDEX                ; magic number NUM_6N2_NIBBLES - 256
+;*                           (ADDED NIBL DELAY)
+READ3       LDA Q6L,X
+            BPL READ3       ;*** NO PAGE CROSS! ***
+            CMP #$AD        ;DATA MARK 3?
+            BNE RSYNC1
+;*                           (CARRY SET IF DM3!)             ; And this imporant why??
+            LDA #$00        ;INIT CHECKSUM
+RDATA1      DEY
+            STY IDX
+READ4       LDY Q6L,X
+            BPL READ4       ;*** NO PAGE CROSS! ***
+            EOR DNIBL,Y     ;XOR 6-BIT NIBL.
+            LDY IDX
+            STA NBUF2,Y     ;STORE IN NBUF2 PAGE.
+            BNE RDATA1      ;TAKEN IF Y-REG NONZERO.
+RDATA2      STY IDX
+READ5       LDY Q6L,X
+            BPL READ5       ;*** NO PAGE CROSS! ***
+            EOR DNIBL,Y     ;XOR 6-BIT NIBL.
+            LDY IDX
+            STA NBUF1,Y     ;STORE IN NBUF1 PAGE.
+            INY
+            BNE RDATA2
+READ6       LDY Q6L,X       ;READ 7-BIT CSUM NIBL.
+            BPL READ6       ;*** NO PAGE CROSS! ***
+            CMP DNIBL,Y     ;IF LAST NBUF1 NIBL NOT
+            BNE RDERR       ;EQUAL CHKSUM NIBL THEN ERR.
+READ7       LDA Q6L,X
+            BPL READ7       ;*** NO PAGE CROSS! ***
+            CMP #$DE        ;FIRST BIT SLIP MARK?
+            BNE RDERR       ;(ERR IF NOT)
+            NOP             ;DELAY BETWEEN NIBLS.
+READ8       LDA Q6L,X
+            BPL READ8       ;*** NO PAGE CROSS! ***
+            CMP #$AA        ;SECOND BIT SLIP MARK?
+            BEQ RDEXIT      ;(DONE IF IT IS)
+
+;***********************************************************************
+
+
+RDERR       SEC             ;INDICATE 'ERROR EXIT'.
+            RTS             ;FROM READ16 OR RDADR16.
+
+
+;=== RDADSEK - Read Disk Address; Seek, Page 106, T0S3 @ $44, $B944 .. $B9FC ===
+
+;            SBTL '16-SECTOR READ ADDRESS'
+;****************************
+;*                          *
+;*    READ ADDRESS FIELD    *
+;*        SUBROUTINE        *
+;*    (16-SECTOR FORMAT)    *
+;*                          *
+;****************************
+;*                          *
+;*    READS VOLUME, TRACK   *
+;*        AND SECTOR        *
+;*                          *
+;*   ---- ON ENTRY ----     *
+;*                          *
+;*  XREG: SLOTNUM TIMES $10 *
+;*                          *
+;*  READ MODE (Q6L, Q7L)    *
+;*                          *
+;*   ---- ON EXIT -----     *
+;*                          *
+;*  CARRY SET IF ERROR.     *
+;*                          *
+;*  IF NO ERROR:            *
+;*    A-REG HOLDS $AA.      *
+;*    Y-REG HOLDS $00.      *
+;*    X-REG UNCHANGED.      *
+;*    CARRY CLEAR.          *
+;*                          *
+;*    CSSTV HOLDS CHKSUM,   *
+;*      SECTOR, TRACK, AND  *
+;*      VOLUME READ.        *
+;*                          *
+;*    USES TEMPS COUNT,     *
+;*      LAST, CSUM, AND     *
+;*      4 BYTES AT CSSTV.   *
+;*                          *
+;*    ---- EXPECTS ----     *
+;*                          *
+;*   ORIGINAL 10-SECTOR     *
+;*  NORMAL DENSITY NIBLS    *
+;*   (4-BIT), ODD BITS,     *
+;*   THEN EVEN.             *
+;*                          *
+;*    ---- CAUTION ----     *
+;*                          *
+;*         OBSERVE          *
+;*    'NO PAGE CROSS'       *
+;*      WARNINGS ON         *
+;*    SOME BRANCHES!!       *
+;*                          *
+;*    ---- ASSUMES ----     *
+;*                          *
+;*    1 USEC CYCLE TIME     *
+;*                          *                                ; === Page 107 ===
+;****************************
+RDADR16     LDY #$FC
+            STY COUNT       ;'MUST FIND' COUNT.
+RDASYN      INY
+            BNE RDA1        ;LOW ORER OF COUNT.
+            INC COUNT       ;(2K NIBLS TO FIND)
+            BEQ RDERR       ;(ADR MARK, ELSE ERR)
+RDA1        LDA Q6L,X       ;READ NIBL.
+            BPL RDA1        ;*** NO PAGE CROSS! ***
+RDASN1      CMP #$D5        ;ADR MARK 1?                     ; magic number DISK_ADR_PROLOG_1 EQU #$D5
+            BNE RDASYN      ;(LOOP IF NOT)
+            NOP             ;ADDED NIBL DELAY.
+RDA2        LDA Q6L,X
+            BPL RDA2        ;*** NO PAGE CROSS! ***
+            CMP #$AA        ;ADR MARK 2?                     ; magic number DISK_ADR_PROLOG_2 EQU #$AA
+            BNE RDASN1      ;(IF NOT, IS IT AM1?)
+            LDY #$3         ;INDEX FOR 4-BYTE READ.          ; Technically, we read 8 disk nibbles &rarrow; 4 memory bytes
+;*                           (ADDED NIBL DELAY)
+RDA3        LDA Q6L,X
+            BPL RDA3        ;*** NO PAGE CROSS! ***
+            CMP #$96        ;ADR MARK 3?                     ; magic number DISK_ADR_PROLOG_3 EQU #$96
+            BNE RDASN1      ;(IF NOT, IS IT AM1?)
+;*                           (LEAVES CARRY SET!)             ; C=1, And this important WHY? Carry becomes Bit 0 of 4&4 Checksum odd nibble, Line #082
+            LDA #$0         ;INIT CHECKSUM.
+RDAFLD      STA CSUM
+RDA4        LDA Q6L,X       ;READ 'ODD BIT' NIBL.            ; Technically, read odd bits
+            BPL RDA4        ;*** NO PAGE CROSS! ***          ; A=1a1c1e1g
+            ROL             ;ALIGN ODD BITS, '1' into LSB.  ; A=a1c1e1gC, and C stays set
+            STA LAST
+RDA5        LDA Q6L,X       ;READ 'EVEN BIT' NIBL.           ; Technically, read even bits
+            BPL RDA5        ;*** NO PAGE CROSS! ***          ; A=1b1d1f1h
+            AND LAST        ;MERGE ODD AND EVEN BITS         ; &=a1c1e1g1
+            STA CSSTV,Y     ;STORE DATA BYTE.                ; A=abcdefgh, Store bytes in reverse order due to Y counting down
+            EOR CSUM        ;XOR CHECKSUM
+            DEY
+            BPL RDAFLD      ;LOOP ON 4 DATA BYTES.
+            TAY             ;IF FINAL CHECKSUM
+            BNE RDERR       ;NONZERO, THEN ERROR.
+RDA6        LDA Q6L,X       ;FIRST BIT-SLIP NIBL.
+            BPL RDA6        ;*** NO PAGE CROSS! ***
+            CMP #$DE                                        ; magic number DISK_ADR_EPILOG_1 EQU #$DE
+            BNE RDERR       ;ERROR IF NONMATCH.
+            NOP             ;DELAY BETWEEN NIBLS.
+RDA7        LDA Q6L,X       ;SECOND BIT-SLIP NIBL.
+            BPL RDA7        ;*** NO PAGE CROSS! ***
+            CMP #$AA                                        ; magic number DISK_ADR_EPILOG_2 EQU #$AA
+            BNE RDERR       ;ERROR IF NONMATCH.              ; Uh, what happened to checking the last disk nibble!?!?! DISK_ADR_EPILOG_3 EQU #$EB
+RDEXIT      CLC             ;CLEAR CARRY ON                  ; This probably deserves a "No shit, Sherlock"
+            RTS             ;NORMAL READ EXITS.              ; Brilliant hardware engineers tend to clutter up code with useless trivial comments. :-/
+;            SBTL '16-SECTOR SEEK'
+;**************************
+;*                        *
+;*  FAST SEEK SUBROUTINE  *                                  ; A fast seek is completely useless
+;*                        *                                  ; if READING forces extra disk spins due to buffer bloat
+;**************************
+;*                        *
+;*   ---- ON ENTRY ----   *
+;*                        *
+;*  X-REG HOLDS SLOTNUM   *
+;*         TIMES $10.     *
+;*                        *
+;*  A-REG HOLDS DESIRED   *
+;*         HALFTRACK,     *                                  ; === Page 108 ===
+;*         (SINGLE PHASE) *
+;*                        *
+;*  CURTRK HOLDS CURRENT  *
+;*          HALFTRACK.    *
+;*                        *
+;*   ---- ON EXIT -----   *
+;*                        *
+;*  A-REG UNCERTAIN.      *
+;*  Y-REG UNCERTAIN.      *
+;*  X-REG UNCERTAIN.      *
+;*                        *
+;*  CURTRK AND TRKN HOLD  *
+;*      FINAL HALFTRACK.  *
+;*                        *
+;*  PRIOR HOLDS PRIOR     *
+;*    HALFTRACK IF SEEK   *
+;*    WAS REQUIRED.       *
+;*                        *
+;*  MONTIMEL AND MONTIMEH *
+;*    ARE INCREMENTED BY  *
+;*    THE NUMBER OF       *
+;*    100 USEC QUANTUMS   *
+;*    REQUIRED BY SEEK    *
+;*    FOR MOTOR ON TIME   *
+;*    OVERLAP.            *
+;*                        *
+;* --- VARIABLES USED --- *
+;*                        *
+;*  CURTRK, TRKN, COUNT,  *
+;*    PRIOR, SLOTTEMP     *
+;*    MONTIMEL, MONTIMEH  *
+;*                        *
+;**************************
+SEEK        STX SLOTTEMP    ;SAVE X-REG
+            STA TRKN        ;SAVE TARGET TRACK
+            CMP CURTRK      ;ON DESIRED TRACK?               ;
+            BEQ SEEKRTS     ;YES, RETURN
+            LDA #$0
+            STA TRKCNT      ;HALFTRACK COUNT.
+SEEK2       LDA CURTRK      ;SAVE CURTRK FOR
+            STA PRIOR       ; DELAYED TURNOFF.
+            SEC
+            SBC TRKN        ;DELTA-TRACKS.
+            BEQ SEEKEND     ;BR IF CURTRK=DESTINATION
+            BCS OUT         ;(MOVE OUT, NOT IN)
+            EOR #$FF        ;CALC TRKS TO GO
+            INC CURTRK      ;INCR CURRENT TRACK (IN).
+            BCC MINTST      ;(ALWAYS TAKEN)
+OUT         ADC #$FE        ;CALC TRKS TO GO.
+            DEC CURTRK      ;DECR CURRENT TRACK (OUT).
+MINTST      CMP TRKCNT                                      ; crappy abbreviation: Min Test
+            BCC MAXTST      ;AND 'TRKS MOVED'.
+            LDA TRKCNT                                      ; crappy abbreviation: Max Test
+MAXTST      CMP #$C                                         ; magic number ON_TIME_SIZE EQU $C, or even OFFTABLE - ONTABLE
+            BCS STEP2       ;IF TRKCNT>$B LEAVE Y ALONE (Y=$B).
+STEP        TAY             ;ELSE SET ACCELERATION INDEX IN Y
+STEP2       = *
+            SEC             ;CARRY SET=PHASE ON
+            JSR SETPHASE    ;PHASE ON
+            LDA ONTABLE,Y   ;FOR 'ONTIME'.
+            JSR MSWAIT      ;(100 USEC INTERVALS)
+;*
+            LDA PRIOR                                       ; === Page 109 ===
+            CLC             ;CARRY CLEAR=PHASE OFF
+            JSR CLRPHASE    ;PHASE OFF
+            LDA OFFTABLE,Y  ;THEN WAIT 'OFFTIME'.
+            JSR MSWAIT      ;(100 USEC INTERVALS)
+            INC TRKCNT      ;'TRACKS MOVED' COUNT.
+            BNE SEEK2       ;(ALWAYS TAKEN)
+;*
+SEEKEND     = *
+            JSR MSWAIT      ;A=0: WAIT 25 MS SETTLE
+            CLC
+;*
+;* TURN HEAD STEPPER PHASE ON/OFF
+;*
+SETPHASE    = *
+            LDA CURTRK      ;GET CURRENT PHASE
+CLRPHASE    = *
+            AND #3          ;MASK FOR 1 OF 4 PHASES
+            ROL             ;DOUBLE FOR PHASE INDEX
+            ORA SLOTTEMP
+            TAX
+            LDA PHASEOFF,X  ;FLIP THE PHASE
+            LDX SLOTTEMP    ;RESTORE X-REG
+SEEKRTS     RTS             ;AND RETURN                     ; /sarcasm I don't know what we would do without you Captain Obvious!
+
+
+;***********************************************************************
+
+
+;=== FORMATR - Format Disk, Page 82 - 85, T0S8 @ $AF.. T0S9 @ $C7, $BEAF .. $BFC7 ===
+
+               ;SBTL '16-SECTOR FORMATTER'
+;****************************
+;*                          *
+;*  FORMAT DISK AND RETURN  *
+;*                          *
+;****************************
+;*
+;* EQUATES FOR FORMATTER
+;*
+;NSYNC       EQU $45         ;NUM GAP SELF-SYNC NIBLS        ; No, not the 90's band
+;*
+;            REP 40
+DSKFORM     = *
+;    DO DIAGMOD              ;ELIMINATE FMTR FROM DIAG ASSEMBLY
+;        LST OFF                                             
+;    ELSE
+            LDY #3                                          ; magic number IOB_OFFSET_VOL = $3
+            LDA (IOBPL),Y   ;VOLUME NUMBER IN IOB.
+            STA NVOL        ;FOR FORMATTER.
+            LDA #$AA        ;SET Z-PAG LOC TO $AA FOR        ; *sigh* Because AA is so descriptive ... WTF does AA stand for to a new reader?!?!
+            STA AA          ;TIME DEPENDENT REFERENCES.      ; Call it WRITE_NIB_AA; see WADR16, Lines #086, #105
+            LDY #$56                                        ; magic number
+            LDA #0
+            STA TRK         ;TRACK NUMBER, 0 TO 34
+CLRNBUF2    STA NBUF2-1,Y   ;CLEAR NBUFS TO WRITE
+            DEY             ;ZERO SECTORS
+            BNE CLRNBUF2
+CLRNBUF1    STA NBUF1,Y
+            DEY
+            BNE CLRNBUF1                                    ;
+            LDA #$50                                        ; magic number TODO FORMAT_LAST_TRACK EQU 40*2   ; *2 = 2 phases/track
+            JSR SETTRK      ;FAKE LIKE ON TRACK 80.
+            LDA #$28                                        ; magic number TODO FORMAT_SECTOR_GAP EQU 40
+            STA NSYNC       ;BEGIN WITH 40 SELF-SYNC NIBLS.
+FORMTRK     LDA TRK
+            JSR MYSEEK      ;GOTO NEXT TRACK.
+            JSR WTRACK16    ;WRITE AND VERIFY TRACK.
+FORMERR1    LDA #8          ;'UNABLE TO FORMAT' ERR CODE.    ; magic number TODO
+            BCS FORMERR     ;CONTINUE IF NO ERROR.
+            LDA #$30        ;UP TO 48 SECTOR RETRIES         ; *sigh* Why _this_ value? magic number TODO FORMAT_MAX_RETRY EQU 48
+            STA RETRYCNT    ;TO FIND SECTOR 0.               ;        Also, why not in decimal??
+FINDS0      SEC             ;ANTICIPATE 'UNABLE TO FORMAT'
+            DEC RETRYCNT    ;DONE 48 RETRIES?
+            BEQ FORMERR     ;IF SO, 'UNABLE TO FORMAT' ERR.
+            JSR RDADR16     ;READ ADR FIELD.                ; *sigh* Inconsistent comment meta character
+            BCS FINDS0      ;RETRY IF ERR.
+            LDA SECT        ;CHECK SECTOR THAT WAS READ.
+            BNE FINDS0      ;CONTINUE SEARCHING IF NOT SECT 0.
+            JSR READ16      ;NOW READ DATA FIELD.           ; *sigh* Make up your mother falcon mind! Always use ; or not!
+            BCS FINDS0      ;CONTINUE SEARCH IF ERR.
+;* (NOW POSITIONED PROPERLY FOR NEXT TRACK)                  ; Unknown if leading space after '*' should be 1 space, 1 tab, etc??
+            INC TRK         ;INCREMENT TRACK NUMBER.         ; /sarcasm Gee, George what does this do?
+            LDA TRK                                         ; Code documents WHAT, Comments document WHY
+            CMP #$23        ;CONTINUE IF LESS THEN 35        ; === Page 83 === magic number DISK_MAX_TRACK or at least VNOTRK
+            BCC FORMTRK                                     ; === T0S9 ===
+            CLC             ;CLEAR CARRY TO INDICATE 'NO ERR';[.. JMP ALLDONE
+            BCC FORMDONE    ;ELSE TURN OFF MOTOR AND RETURN  ; ..
+FORMERR     LDY #$0D                                        ; .. JMP HNDLERR magic number IOB_OFFSET_ERR = $D
+            STA (IOBPL),Y   ;RETURN ERROR CODE.              ; .. wastes remaining 6 bytes.
+            SEC             ;SET CARRY TO INDICATE ERR.      ; .. We could invert the return value,
+FORMDONE    LDA MOTOROFF,X  ; TURN MOTOR OFF.               ; .. but there is a better optimization
+            RTS             ; AND RETURN.                   ; .. using the two JMPs above to reach common code in RWTSTWO ]
+  
+
+;***********************************************************************
+
+;******************************
+;*                            *
+;*   WRITE TRACK SUBROUTINE   *
+;*                            *
+;******************************
+WTRACK16    LDA #0
+            STA NSECT       ;SECTOR NUMBER, 0 to 15.
+            LDY #128        ;128 NIBS PRIOR SECTOR 0
+            BNE WSECT0      ; TO INSURE NO BLANK SPOT BETW 15 & 0
+WSECT       LDY NSYNC       ;CURRENT NUM OF GAP SELF-SYNC NIBLS.
+WSECT0      = *
+            JSR WADR16      ;WRITE GAP AND ADR FIELD.
+            BCS WEXIT2      ;ERR IF WRITE PROTECTED.
+            JSR WRITE16     ;WRITE SECTOR FROM NBUF1, NBUF2
+            BCS WEXIT2      ;ERR IF WRITE PROTECTED.
+            INC NSECT       ;NEXT OF 16 SECTORS.
+            LDA NSECT
+            CMP #$10                                        ; What's the point of VNOSEC in VTOC then?!?!
+            BCC WSECT       ;CONTINUE IF NOT DONE.
+;            PAGE
+
+;*****************************
+;*                           *
+;*     VERIFY ROUTINE        *
+;*                           *
+;*  VERIFIES THAT THE FIRST  *
+;*  SECTOR ENCOUNTERED IS    *
+;*  SECTOR 0, AND THAT ALL   *
+;*  16 SECTORS ARE READABLE  *
+;*  WITH MINIMAL RETRIES.    *
+;*  (2 REVOLUTIONS MAXIMUM)  *
+;*                           *
+;*  IF FIRST SECTOR IS NOT   *
+;*  SECTOR 0 THEN THE        *
+;*  CURRENT NUMBER OF SELF-  *
+;*  SYNC NIBLS IS DECR'D BY  *
+;*  1 (IF ALREADY LESS THAN  *
+;*  16) OR BY 2. THEN SECTOR *
+;*  15 IS LOCATED SO AS TO   *
+;*  POSITION THE NEW TRACK   *
+;*  REWRITE.                 *
+;*                           *
+;*  IF UNABLE TO READ ANY    *
+;*  SECTOR THEN THE ENTIRE   *
+;*  TRACK IS REWRITTEN.      *
+;*                           *
+;*  AFTER VERIFYING TRACK 0, *
+;*  THE NUMBER OF SELF-SYNC  *
+;*  NIBLS, NSYNC, IS DECR'D  *
+;*  BY 2 (IF STILL 16 OR     *
+;*  GREATER).                *
+;*                           *
+;*****************************
+;            PAGE                                            ; === Page 84 ===
+
+	; fall-through from WTRACK16
+VTRACK      LDY #$F                                         ; magic number TODO
+            STY NSECT       ;SET 16 BYTES OF
+            LDA #$30        ;SECTOR FOUND TABLE
+            STA RETRYCNT    ;TO $30 (MARK THEM).             ; TEXT HOLE TODO XREF with other screen holes
+CLRFOUND    STA FOUND,Y
+            DEY
+            BPl CLRFOUND
+            LDY NSYNC
+S0DELAY     JSR WEXIT2
+            JSR WEXIT2      ;(12) EXPECTED TO INSURE
+            JSR WEXIT2      ;(12) PROPER GAP PRIOR SECTOR 0.
+            PHA             ;(3)
+            PLA             ;(4)
+            NOP             ;(2)
+            DEY             ;(2)
+            BNE S0DELAY     ;(3)
+            JSR RDADR16     ;READ NEXT ADDRESS FIELD.
+            BCS S15LOC      ;ERR, LOCATE SECT 15 AND REWRITE TRK.
+            LDA SECT        ;WAS IT SECTOR 0?
+            BEQ VDATA       ;YES, NOW VERIFY DATA FIELD.
+            LDA #$10                                        ;↓ magic number TODO
+            CMP NSYNC       ;DECR NSYNC BY 1 IF LESS THAN
+            LDA NSYNC       ;16, BY 2 IF NOT LESS.
+            SBC #1
+            STA NSYNC
+            CMP #5          ;IF LESS THAN 5, UNRECOVERABLE
+            BCS S15LOC      ;ERR, ELSE REWRITE AFTER DATA FLD 15.
+VERR        SEC             ;DRIVE EXTREMELY FAST OR
+            RTS             ;OTHER SEVERE ERROR.
+VSECT       JSR RDADR16     ;READ AN ADDRESS FIELD.
+            BCS VERR1       ;RETRY IF ERR.                   ;↓
+VDATA       JSR READ16      ;READ DATA FIELD.
+            BCC SECTOK      ;(GOOD)                          ;↓
+VERR1       DEC RETRYCNT    ;NEXT OF 48 SECTOR TRIES.
+            BNE VSECT       ;(KEEP TRYING)                   ;↑
+S15LOC      JSR RDADR16     ;READ ADDRESS FIELD.            ;↑
+            BCS NOTS15      ;ERR, TRY UP TO 128 TIMES.       ;↓
+            LDA SECT        ;SECTOR THAT WAS READ.
+            CMP #$F         ;SECTOR 15?                      ; magic number VERIFY_REREAD_LAST_SEC
+            BNE NOTS15      ;NO, CONTINUE SEARCHING.         ;↓
+            JSR READ16      ;READ DATA FIELD.               ;  Why isn't this called READDATAHDR ???
+            BCC WTRACK16    ;WRITE TRACK FROM HERE IF NO ERR.            ;↑ Read 16 what? Oh, Read 16 Sector Data Field
+NOTS15      DEC RETRYCNT    ;$FF TO $7F, 128 TRIES.
+            BNE S15LOC      ;TRY FOR SECT 15 AGAIN.          ;↑
+            SEC             ;SET CARRY TO INDICATE VERIFY ERR.
+WEXIT2      RTS             ;AND RETURN TO FORMATTER.
+SECTOK      LDY SECT        ;THIS IS SECTOR READ.
+            LDA FOUND,Y     ;ALREADY FOUND?
+            BMI VERR1       ;YES, IGNORE IT.
+            LDA #$FF                                        ; magic number FLAG_SECTOR_FOUND = 1
+            STA FOUND,Y     ;INDICATE THIS SECT NOW FOUND.
+            DEC NSECT       ;FOUND 16 SECTORS?
+            BPL VSECT       ;NO, LOOK FOR NEXT.
+            LDA TRK
+            BNE WEXIT1      ;IF TRACK 0 AND NSYNC > 16       ;
+            LDA NSYNC       ;(NUM GAP SYNC NIBLS)
+            CMP #$10        ;THEN SUBTRACT 2 FROM NSYNC
+            BCC WEXIT2      ;TO AVOID RETRIES ON LATER TRKS.
+            DEC NSYNC
+            DEC NSYNC
+WEXIT1      CLC             ;INDICATE NO ERROR.
+            RTS             ;RETURN.
+;******************************                              ; === Page 85 ===
+AEC2        =              * ;TELL RELOCTR WHERE RWTS ENDS
+;******************************
+FOUND       .byt 0,0,0,0     ;'SECTOR FOUND' TABLE            ;[.. wastes 16 bytes -- these are always cleared before used CLRFOUND, See: SECTOK
+            .byt 0,0,0,0                                     ; .. TODO DOS 3.3 1980 has these as $FF
+            .byt 0,0,0,0                                     ; ..
+            .byt 0,0,0,0                                     ; ..]
+;    FIN                                                     ; Macro started waaay back on Line #014, DSKFORM
+
+;***********************************************************************
+
+;* THIS TABLE IS USED TO TRANSLATE
+;* LOGICAL (REQUESTED) SECTOR NUMBER
+;* TO PHYSICAL SECTOR NUMBER. THE
+;* DISKETTE IS FORMATTED WITH ALL
+;* SECTORS IN MONOTONICALLY INCREASING                       ; MONOTONICALLY INCREASING ORDER
+;* ORDER. THE TRANSLATION WILL ALLOW                         ; Yup, math classes were just as boring back then too.
+;* TIME BETWEEN SECTORS FOR READS.
+;*
+;            REP 40
+;*
+;* NOTE: THE CURRENT IMPLEMENTATION OF DOS
+;*  USUALLY ACCESSES SECTORS IN DECREASING
+;*  ORDER ON A TRACK. THUS WE WILL
+;*  TRANSLATE IN REVERSE ORDER...
+;*
+;* THE INTERLEAVE IS THEN 9:1                                ; TODO: Verify this is optimal for reading
+;*                                                           ; sectors in normal F,E,D,..,2,1,0 access pattern order
+;* NOTE: WE MAP LOGICAL SECTOR 0
+;*  INTO PHYSICAL SECTOR 0 SO THAT
+;*  WRITING OF BOOT DURING 'INIT'
+;*  IS CORRECT FOR SECTOR ZERO.
+;*
+INTRLEAV    = *                                           ; *sigh*
+            .byt $00,$0D,$0B,$09                             ; /sarcasm Here's a novel concept ...
+            .byt $07,$05,$03,$01                             ; How about *formatting* the sectors in the correct
+            .byt $0E,$0C,$0A,$08                             ; order on the disk in the first place so we don't even
+            .byt $06,$04,$02,$0F                             ; need to waste memory with this table at all !
+
+
+;***********************************************************************
+
+;=== WRITADR - Write Address, Page 134, T0S6 @ $56, $BC56 .. $BCFF ===
+
+            ;SBTL '16-SECTOR WRITE ADDRESS'
+;********************************
+;*                              *
+;*  WRITE ADR FIELD SUBROUTINE  *                            ; Writes Disk Nibbles:
+;*      (16-SECTOR FORMAT)      *                            ;     FF  FF  FF .. FF      (Y sync bytes)
+;*  WRITES SPECIFIED NUMBER OF  *                            ;     D5  AA  96
+;*  40-USEC (10-BIT) SELF-SYNC  *                            ;         VOL VOL           4&4
+;*  NIBLS, ADR FIELDS 16-SECTOR *                            ;         TRK TRK           4&4
+;*  START MARKS ($D5,$AA,$96),  *                            ;         SEC SEC           4&4
+;*  BODY (VOLUME, TRACK, SECTOR,*                            ;         CRC CRC           4&4
+;*  CHECKSUM), END FIELD MARKS, *                            ;     DE  EA  EB
+;*  AND THE WRITE TURN-OFF NIBL.*
+;*                              *
+;********************************
+;*                              *
+;*   ------- ON ENTRY -------   *
+;*                              *
+;*  THE LOCATIONS VOLUME, TRK,  *                            ; Technically NVOL not VOLUME
+;*  AND NSECT MUST CONTAIN THE  *                            ; See, programmers wrote out-of-date comments even back then! /s
+;*  DESIRED VOLUME, TRACK, AND  *                            ;
+;*  SECTOR VALUES DESIRED.      *                            ;   NVOL  @ $41 Volume
+;*                              *                            ;   TRK   @ $44 Track
+;*  THE PROPER DRIVE MUST BE    *                            ;   NSECT @ $3F Sector
+;*  ENABLED AND UP TO SPEED IN  *                            ;
+;*  READ MODE (Q7L, Q6L).       *                            ; Not documented: AA
+;*                              *                            ;
+;*  X-REG CONTAINS SLOTNUM      *                            ;   Zero-Page $3E *must* contain #$AA
+;*                    TIMES 16. *                            ;   for 3 cycle timing. See Line #086
+;*                              *
+;*  Y-REG CONTAINS NUMBER OF    *
+;*    SELF SYNC NIBLS DESIRED   *
+;*    MINUS 1.                  *
+;*      (0 FOR 256 NIBLS)       *
+;*                              *
+;********************************
+;*                              *
+;*   ------- CAUTION --------   *
+;*                              *
+;*         1 USEC CYCLE         *
+;*                              *
+;********************************
+;*                              *
+;*   ------- CAUTION --------   *
+;*                              *
+;*  MOST OF THIS CODE IS TIME   *
+;*  CRITICAL.  OBSERVE ALL      *
+;*  'NO PAGE CROSS!' WARNINGS   *
+;*  ON BRANCHES                 *
+;*                              *
+;********************************
+SWADR1      = *           ;TELL RELOCATOR WHERE TO BEGIN
+;*******************************
+WADR16      SEC             ;ANTICIPATE WR PROT ERR.
+            LDA Q6H,X       ;INTO 'WR PROT SENSE' MODE.      ; === Page 135 ===
+            LDA Q7L,X       ;SENSE IT (NEG=PROTECTED)
+            BMI WADRTS      ;ERR EXIT IF PROTECTED.
+            LDA #$FF        ;SELF-SYNC NIBL.                 ; 40 µ seconds to write any SYNC nibble
+            STA Q7H,X       ;WRITE FRIST NIBL.               ; = 0 [ 0]
+            CMP Q6L,X       ;(4) BACK TO WRITE MODE.         ; + 4 [ 4]
+            PHA             ;(3) FOR DELAY                   ; + 3 [ 7]
+            PLA             ;(4)                             ; + 4 [11]
+WSYNC1      JSR WADRTS1     ;(12) FOR 40-USEC NIBLS.         ; +12 [23] JSR=+6, <----------------+
+            JSR WADRTS1     ;(12)                            ; +12 [35] RTS=+6                   |
+            STA Q6H,X       ;(5) WRITE NIBL.                 ; + 5 [40] ========> 0 [ 0]         |
+            CMP Q6L,X       ;(4) (BACK TO WRITE MODE)        ;                  + 4 [ 4]         |
+            NOP             ;(2) FOR DELAY.                  ;                  + 2 [ 6]         |
+            DEY             ;(2) NEXT OF 'N' NIBLS.          ;                  + 2 [ 8]         |
+            BNE WSYNC1      ;(3) *** NO PAGE CROSS! ***      ; + 2 [10] BEQ <== + 3 [11] --> BNE ^
+                                                                                    ; 32 µ seconds write DATA nibble
+            LDA #$D5        ;(2) ADR MARK 1.                 ; + 2 [12] magic number DISK_ADR_PROLOG_1 EQU #$D5
+            JSR WNIBLB2     ;(15,9,6) WRITE IT.              ; +24 [10] <-- JSR=6, WNIBLB2=9, WRNIBL=15
+            LDA #$AA        ;(2) ADR MARK 2.                 ; + 2 [12] magic number DISK_ADR_PROLOG_2 EQU #$AA
+            JSR WNIBLB2     ;(15,9,6) WRITE IT.              ; +24 [10]
+            LDA #$96        ;(2) 16-SECTOR ADR MARK 3.       ; + 2 [10] magic number DISK_ADR_PROLOG_3 EQU #$96
+            JSR WNIBLB2     ;(15,9,6) WRITE IT.              ; +24 [10]
+            LDA NVOL        ;(3)                             ; + 3 [13]
+            JSR WBYTE       ;(14,9,6) WRITE NVOL (ODD, THEN EVEN, BITS.) ; JSR=6
+            LDA TRK         ;(3) WRITE TRACK NUMBER.         ;
+            JSR WBYTE       ;(14,9,6) ODD, THEN EVEN, BITS)  ;
+            LDA NSECT       ;(3) WRITE SECTOR NUMBER.        ;
+            JSR WBYTE       ;(14,9,6) (ODD, THEN EVEN, BITS) ;
+            LDA NVOL        ;(3)                             ;
+            EOR TRK         ;(3) FORM ADR FIELD CHECKSUM.    ;
+            EOR NSECT       ;(3)                             ;
+            PHA             ;(3) SAVE FOR EVEN BITS.         ;
+            LSR             ;(2) ALIGHN ODD BITS.            ; *spelling* "ALIGN" Poorly written assemblers explicitly need the implicit A register
+            ORA AA          ;(3) SET CLOCK BITS.             ; This is a shitty variable name: AA; call it WRITE_NIB_AA, see DSKFORM, Line #020,
+                            ;(PRECISE TIMING, 32 CYCLES PER NIBL)
+            STA Q6H,X       ;(5) WRITE CHECKSUM ODD BITS.    ;
+            LDA Q6L,X       ;(4) BACK TO WRITE MODE.         ;
+            PLA             ;(4) RECOVER FOR EVEN BITS.      ;
+            ORA #$AA        ;(2) SET CLOCK BITS.             ;
+            JSR WNIBLA      ;(17,9,6) WRITE THEM.            ;
+            LDA #$DE        ;(2) END MARK 1.                 ; magic number DISK_ADR_EPILOG_1 EQU #$DE
+            JSR WNIBLB2     ;(15,9,6) WRITE IT.              ;
+            LDA #$AA        ;(2) END MARK 2.                 ; magic number DISK_ADR_EPILOG_2 EQU #$AA
+            JSR WNIBLB2     ;(15,9,6) WRITE IT.              ;
+            LDA #$EB        ;(2) END MARK 3.                 ; magic number DISK_ADR_EPILOG_3 EQU #$EB
+            JSR WNIBLB2     ;(15,9,6) 'WRITE TURN-OFF'       ;
+            CLC             ;INDICATE NO WR PROT ERR.
+WADRTS      LDA Q7L,X       ;OUT OF WRITE MODE.              ; TODO: used elsewhere?
+            LDA Q6L,X       ;TO READ MODE.                   ;        These are shit function names -- they give no clue when they should be called!
+WADRTS1     RTS             ;RETURN                          ;        should be called WAIT_6
+WBYTE       PHA             ;(3) PRESERVE FOR EVEN BITS.     ;+3 [22] should be called WRITE13_2NIB_22, JSR when cycles=13
+            LSR             ;(2) ALIGN ODD BITS.             ;+2 [25]
+            ORA AA          ;(3) SET CLOCK BITS.             ;+3 [27]
+            STA Q6H,X       ;(5) WRITE NIBL.                 ;+5 [32] See: WRNIBL
+            CMP Q6L,X       ;(4)                             ;=4 [ 4]
+            PLA             ;(4) RECOVER FOR EVEN BITS.      ;+4 [ 8]
+            NOP             ;(2)                             ;+2 [10]
+            NOP             ;(2) FOR DELAY.                  ;+2 [12]
+            NOP             ;(2)                             ;+2 [14]
+            ORA #$AA        ;(2) SET CLOCK BITS.             ;+2 [16]
+WNIBLA      NOP             ;(2) (17,9,6) ENTRY.             ;+2 [18] Should be called WRITE12_1nib_18, JSR when cycles=12
+WNIBLB2     NOP             ;(2) (15,9,6) ENTRY.             ;+2 [20] should be called WRITE14_1nib_20, JSR when cycles=14
+            PHA             ;(3) FOR                         ;+3 [23]
+            PLA             ;(4) DELAY.                      ;+4 [27] === Page 136 ===
+WRNIBL      STA Q6H,X       ;(5) WRITE NIBL.                 ;+5 [32] Should be called WRITE21_1nib_27, JSR when cycles=21
+            CMP Q6L,X       ;(4)                             ;=4 [ 4] -- WRNIBL unused, never referenced --
+            RTS             ;(6) RETURN                      ;+6 [10]
+;EWADR1      = *         ;TELL RELOCTR WHERE TO STOP
+;XP2         EQU <*+255      ;H.O. ADDRESS NEXT PAGE         ; Other page align macros BHERE1 use:
+;XP2H        EQU 256*XP2     ;NOW AS 16-BITS                 ;     DS $100-EWADR1
+;            DS XP2H-*,0     ;PAD OUT TO PAGE BOUNDARY..     ; *wastes* 33 bytes!
+
+
+;***********************************************************************
+
+; nibble buffers
+; NBUF1 (256 bytes) must not cross a page boundary
+; NBUF2 (86 bytes) must not cross a page boundary
+	.align 256
+NBUF1	;=(*+255) & $ff00
+	.dsb NBUF1-*
+NBUF2	; uses lowest 86 bytes
+DNIBL	; uses bytes $96-$ff
+	.dsb 256
+
+;***************************
+;*      7-BIT TO 6-BIT     *
+;*     'DENIBLIZE' TABL    *
+;*    (16-SECTOR FORMAT)   *
+;*                         *
+;*       VALID CODES       *
+;*     $96 TO $FF ONLY.    *
+;*                         *
+;*                         *
+;*   CODES WITH MORE THAN  *
+;*   ONE PAIR OF ADJACENT  *
+;*    ZEROES OR WITH NO    *
+;*   ADJACENT ONES (EXCEPT *
+;*    BIT 7) ARE EXCLUDED. *
+;*                         *
+;* THIS TABLE *MUST* BE    *
+;* ALIGNED AT THE END OF   *
+;* A PAGE IN MEMORY!!!     *
+;***************************
+
+;XP          EQU <*          ;CURRENT PAGE ADDRESS           ; $BA96..$BAFF table data
+;DNIBL       EQU 256*XP      ;DNIBL  TABLE PAGE              ; See READ4
+
+
 
