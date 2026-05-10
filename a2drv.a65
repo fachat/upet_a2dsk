@@ -1,0 +1,658 @@
+
+; from: https://htmlpreview.github.io/?https://github.com/Michaelangel007/apple2_dos33/blob/master/dos33.html#Listing
+
+; original apple 
+CSSTV	=$2c
+T0	=$26
+TRKN	=$2a
+
+; vars
+SEKCNT	.byt 0
+CURTRK	.byt 0
+RECALCCNT .byt 0
+
+; consts
+IBDERR	=$40
+IBVMME	=$20
+IBWPER	=$10	; write protect err
+
+; IO
+Q6L	=$90fc
+Q7L	=$90fe
+
+
+;==================================================================================
+
+;=== RWTSONE - Read Write Track Sector - Part 1, Page 116, T0S7, $BD00 .. $BDAA ===
+
+            ;STBL '16-SECTOR RWTS'
+;****************************
+;*         DISK II          *
+;* READ/WRITE TRACK-SECTOR  *                                  ; The famous RWTS
+;*                          *                                  ; Technically it should be called RWSWT since it only supports:
+;*   COPYRIGHT 1978 BY      *                                  ;    Read  Sector (RS)
+;*  APPLE COMPUTER, INC.    *                                  ;    Write Sector (WS)
+;*                          *                                  ;    Write Track  (WT)
+;*  ALL RIGHTS RESERVED     *
+;*                          *
+;*      R. WIGGINTON        *
+;*                          *
+;*  MODIFIED: 07/13/79      *
+;*     R. AURICCHIO         *
+;*  ADDED WAIT-SEEK WHEN    *
+;*  POWERING-UP MOTOR.      *
+;*                          *
+;*  MODIFIED: 10/25/79      *
+;*      R. AURICCHIO        *
+;*  ADDED DIAGMODE DISPLAYS *
+;*   FOR ACTIVITY ANALYSIS. *
+;****************************
+ASC2        = *           ;TELL RELOCTR WHERE RWTS BEGINS
+;*********************************
+MOTOROFF    = $C088
+MOTORON     = $C089
+DRV1EN      = $C08A
+DRV2EN      = $C08B
+;******************************
+;* STATE MACHINE CONTROLS
+;* Q6   Q7   FUNCTION
+;* --   --   --------
+;* LO   LO   READ
+;* HI   LO   SENSE WRITE PROTECT
+;* LO   HI   WRITE
+;* HI   HI   WRITE LOAD
+;******************************
+DRV1TRK     = $478                                        ; Text screen hole
+DRV2TRK     = $4F8                                        ; Text screen hole
+IOBPL       = $48                                         ;
+IOBPH       = $49                                         ;
+SLOT        = $5F8        ;HOLDS SLOT NUM USED            ;
+PTRSDEST    = $3C                                         ;
+DEVCTBL     = PTRSDEST                                    ; $3C is pointer to Device Characteristics Table. See DCT
+DRIVNO      = $35                                         ;      [0] Device Type -- never used --
+MONTIME     = $46                                         ;      [1] Phases Per Track
+SECT        = CSSTV+1                                     ; $2D  [2] Motor On Delay Low -- never used --
+TRACK       = CSSTV+2                                     ; $2E  [3] Motor On Delay High
+VOLUME      = CSSTV+3                                     ; $2F
+MAXSEEKS    = 4           ;MAX FOR SEEKCNT                ;
+SEEKCNT     = $4F8        ;# RESEEKS BEFORE RECALIBRATE   ; Text screen hole, recycled with DRV2TRK
+RETRYCNT    = $578                                        ; Text screen hole
+RECALCNT    = $6F8        ;# RECALIBRATES -1              ; Text screen hole
+;            PAGE                                            ; === Page 117 ===
+;    LST OFF
+;    DO DIAGMODE
+;*                                                            
+;* DIAGMODE EQUATES...                                        
+;*                                                            
+SP          = $A0         ;SPACE (INDICATOR OFF)           
+TD          = 4           ;DISPL BETWEEN CHARS             
+TC1         = $1E         ;^ - RWTS ACTIVE                 
+TL1         = $07D0                                        ; VTAB 24: HTAB 1
+TC2         = $0D         ;M - MOTOR STARTUP               
+TL2         = TL1+TD                                       
+TC3         = $13         ;S - SEEK IN PROGRESS            
+TL3         = TL2+TD                                       
+TC4         = $01         ;A - READING ADDRESS             
+TL4         = TL3+TD                                       
+TC5         = $0C         ;L - NOT DESIRED SECTOR (LATENCY)
+TL5         = TL4+1                                        
+TC6         = $05         ;E - ADDRESS ERROR               
+TL6         = TL5+1                                        
+TC7         = $10         ;P - PRENIBBILIZING              
+TL7         = TL4+TD                                       
+TC8         = $17         ;W - WRITING                     
+TL8         = TL7+TD                                       
+TC9         = $12         ;R - READING                     
+TL9         = TL8+TD                                       
+TC10        = $05         ;E - READ ERROR                  
+TL10        = TL9+TD                                       
+TC11        = $0F         ;O - POSTNIBBLIZING              
+TL11        = TL10+TD                                      
+;*                                                            
+SCOUNT      = $2FE        ;SECTORS-ACCESSED COUNT          
+LCOUNT      = $2FF        ;LATENCY COUNT                   
+TL12        = TL11+TD     ;LATENCY POSITION                
+;            PAGE
+;    FIN
+;    LST ON
+;**************************
+;*                        *
+;*      READ/WRITE A      *
+;*    TRACK AND SECTOR    *
+;*                        *
+;**************************
+;*                        *
+;*   ENTER WITH A & Y     *
+;* REGISTERS POINTING TO  *
+;* THE I/O CONTROL BLOCK  *
+;* (THE 'IOB'). INSIDE    *
+;* THE IOB:               *
+;*                        *
+;* IBTYPE: IOB TYPE CODE  *
+;*       (SHOULD BE A 01) *
+;*                        *
+;* IBSLOT: CONTROLLER SLOT*
+;*      NUMBER FOR THIS   *
+;*      ACCESS.           *
+;*                        *
+;* IBDRVN: DRIVE NUMBER   *
+;*       FOR THIS ACCESS  *
+;*                        *
+;* IBVOL: EXPECTED VOLUME *
+;*      NUMBER. NOTE THAT *
+;*      VOLUME 00 MATCHES *
+;*      ANY VOLUME NUMBER *                                  ; === Page 118 ===
+;*                        *
+;* IBTRK: TRACK TO USE    *
+;*      THIS ACCESS       *
+;*                        *
+;* IBSECT: SECTOR NUMBER  *
+;*       TO USE THIS TIME *
+;*                        *
+;* IBDCTP: POINTER TO THE *
+;*       DEVICE CHARACTER-*                                  ; Really? You HAD to indent the line and force an artificial word break when it fits??
+;*       ISTICS TABLE.    *
+;*                        *
+;* IBBUFP: POINTER TO THE *
+;*       PLACE THE DATA IS*
+;*       OR SHOULD BE.    *
+;*                        *
+;* IBDLEN: AMOUNT OF DATA *
+;*       INBYTESTOBE      *
+;*       PROCESSED.       *
+;*                        *
+;* IBCMD: COMMAND CODE:   *
+;*      0-> NULL COMMAND  *                                  ; And this null command serves what purpose???
+;*      1-> READ SECTOR   *                                  ; RWTS_CMD_READ_SEC   = 1
+;*      2-> WRITE SECTOR  *                                  ; RWTS_CMD_WRITE_SEC  = 2
+;*      4-> FORMAT DISK   *                                  ; RWTS_CMD_FORMAT     = 4
+;*
+;* IBSTAT: ERROR CODE:    *
+;*     0-> NO ERROR       *
+;*   $10-> WRITE PROTECT  *
+;*   $20-> VOLUME ERROR   *
+;*   $40-> DRIVE ERROR    *
+;*   $80-> READ ERROR     *
+;*
+;* IBSMOD: LOCATION TO    *
+;*       RETURN THE VOLUME*
+;*       NUMBER ACTUALLY  *
+;*       FOUND.           *
+;*                        *
+;* IOBPSN: PREVIOUS SLOT  *
+;*      NUMBER USED LAST  *                                  ; Why isn't the first word aligned with the colon???
+;*      ACCESS.           *
+;*                        *
+;* IOBPDN: PREVIOUS DRIVE *
+;*      NUMBER USED LAST  *
+;*      ACCESS.           *
+;*                        *
+;**************************
+;*                        *
+;* DEVICE CHARACTERISTICS *
+;* TABLE DESCRIPTION:     *
+;*                        *
+;* DEVICE TYPE CODE       *                                  ; B7FB: [0] Device Type -- never used --
+;*  (ZERO FOR DISK II)    *
+;*                        *
+;* NUMBER OF PHASES PER   *                                  ; B7FC: [1] Device Phases Per Track, See MYSEEK
+;* TRACK (TWO FOR DISK II)*
+;*                        *
+;* MOTOR ON TIME IN 100   *                                  ; B7FD: [2] Motor On Delay Low -- never used --
+;* MICROSECOND INTERVALS  *                                  ; B7FE: [3] Motor On Delay High -> MONTIME+1, See Line #250
+;* COMPLEMENTED. ($D8EF   *                                  ; Lies, only $D8 is used.
+;* FOR DISK II)           *
+;*                        *
+;**************************
+;            PAGE                                            ; === Page 119 ===
+RWTS        STY IOBPL       ;UPON ENTRY, A&Y POINT AT THE
+            STA IOBPH       ;I/O CONTROL BLOCK (IOB)
+;        LST OFF
+;        DO DIAGMODE
+            LDY #TC1        ;SAY WE'RE ACTIVE
+            STY TL1                                         
+;        FIN
+;        LST ON
+            LDY #2          ;SET RECALIBRATE                ; magic number RWTS_RECALIBRATE = $2
+            STY RECALCNT    ; COUNT                         ; Text screen hole!
+            LDY #MAXSEEKS   ;SET RESEEK
+            STY SEEKCNT     ; COUNT                         ; Another text screen hole. WTF! 33 bytes above on page $3C / $BC!
+            LDY #1          ;GET SLOT # FOR THIS OPERATION  ; magic number IOB_OFFSET_SLOT
+            LDA (IOBPL),Y
+            TAX
+            LDY #$0F        ;DID HE CHANGE SLOTS?           ; magic number IOB_OFFSET_PREV_SLOT
+            CMP (IOBPL),Y
+            BEQ SAMESLOT    ;IF HE DIDN'T, GOOD FOR HIM!
+;*
+;* NOW ARE USING A DIFFERENT SLOT.
+;* NOW WAIT FOR THIS DRIVE TO TURN OFF
+;* TO SENSE MOTOR NOT SPINNING, DATA FROM DISK MUST
+;* BE THE SAME FOR AT LEAST 96 MICROSECONDS
+            TXA             ;SAVE NEW SLOT #
+            PHA
+            LDA (IOBPL),Y   ;GET 'OLD SLOT NUMBER'
+            TAX
+            PLA
+            PHA             ;PUT BACK ON STACK
+            STA (IOBPL),Y   ;SAVE 'NEW SLOT NUMBER'
+            LDA Q7L,X       ;GO INTO READ MODE
+STILLON     LDY #$08        ;TO BE SURE, DATA MUST REMAIN
+            LDA Q6L,X       ;STABLE FOR 96 MICROSECONDS
+NOTSURE     CMP Q6L,X       ;DATA STILL CHANGING?
+            BNE STILLON     ;IF SO, STILL SPINNING
+            DEY
+            BNE NOTSURE     ;STABLE LONG ENOUGH? IF NOT, LOOP
+;*
+;* PREVIOUS SLOT'S DRIVE NOW OFF...
+;*
+            PLA             ;RESTORE NEW SLOT #
+            TAX
+;*
+;* NOW CHECK IF THE MOTOR IS ON, THEN START IT
+;*
+SAMESLOT    LDA Q7L,X       ;MAKE SURE IN READ MODE
+            LDA Q6L,X
+            LDY #8          ;WE MAY HAFTA CHECK SEVERAL TIMES TO BE SURE ; magic number RWTS_MIN_NIBBLES_DELTA = $8
+CHKIFON     = *
+            LDA Q6L,X       ;GET THE DATA
+            PHA             ;DELAY FOR DISK DATA TO CHANGE
+            PLA
+            PHA
+            PLA
+            STA SLOT                                        ; Text Screen Hole
+            CMP Q6L,X       ;CHECK RUNNING HERE
+            BNE ITISON      ;=>IT'S ON...
+            DEY             ;MAYBE WE DIDN'T CATCH IT
+            BNE CHKIFON     ; SO WE'LL TRY AGAIN
+;*
+ITISON      = *
+            PHP             ;SAVE TEST RESULTS              ; === Page 120 ===
+            LDA MOTORON,X   ;TURN ON MOTOR REGARDLESS
+            LDY #6          ;MOVE OUT ALL POINTERS INTO ZPAGE    ; magic number IOB_OFFSET_DCT
+PTRMOV      LDA (IOBPL),Y                                        ;                             [6] 37EE..37EF -> $ [0] 003C IOB_DCT
+            STA PTRSDEST-6,Y                                     ; magic number IOB_OFFSET_DCT [8] 37F0..37F1 -> $ [2] 003D IOB_BUF
+            INY
+            CPY #$0A        ;MOVED ALL POINTERS?            ; magic number IOB_OFFSET_LEN
+            BNE PTRMOV
+            LDY #3          ;SET UP THE                     ; magic number DCT_MOTOR+1
+            LDA (DEVCTBL),Y ; MOTOR-ON TIME                 ;
+            STA MONTIME+1                                   ; BUG: Motor On Time Low is never stored to MONTIME!
+            LDY #2          ;NOW GET PARAMS                 ; magic number IOB_OFFSET_DRV_NUM
+            LDA (IOBPL),Y   ;DETERMINE DRIVE ONE OR TWO
+            LDY #$10        ;SAME DRIVE USED BEFORE?        ; magic number IOB_OFFSET_PREV_DRV
+            CMP (IOBPL),Y
+            BEQ OK          ;IF SO, DON'T NECESSARILY WAIT FOR MOTOR
+            STA (IOBPL),Y   ;NOW USING THIS DRIVE
+            PLP             ;TELL HIM MOTOR WAS OFF
+            LDY #$00        ;SET ZERO FLAG                  ; 6502 doesn't have a CLZ or SEZ instruction
+            PHP
+OK          ROR             ;BY GOING INTO THE CARRY
+            BCC SD1         ;SELECT DRIVE 2 !
+            LDA DRV1EN,X    ;ASSUME DRIVE 1 TO HIT
+            BCS DRVSEL      ;IF WRONG, ENABLE DRIVE 2 INSTEAD
+SD1         LDA DRV2EN,X
+DRVSEL      = *
+            ROR DRIVNO      ;SAVE SELECTED DRIVE
+;*
+;* DRIVE SELECTED. IF MOTORING-UP,
+;*  WAIT BEFORE SEEKING...
+;*
+            PLP             ;WAS THE MOTOR
+            PHP             ; PREVIOUSLY OFF?
+            BNE NOWAIT      ;=>NO, FORGET WAITING.
+            LDY #7          ;YES, DELAY 150 MS
+SEEKW       JSR MSWAIT
+            DEY
+            BNE SEEKW
+            LDX SLOT        ;RESTORE SLOT NUMBER
+;*
+NOWAIT      = *
+;*
+;* SEEK TO DESIRED TRACK...
+;*
+            LDY #4          ;SET TO IOBTRK                  ; magic number IOB_OFFSET_TRK
+            LDA (IOBPL),Y   ;GET DESIRED TRACK
+            JSR MYSEEK      ;SEEK!
+;*
+;* SEE IF MOTOR WAS ALREADY SPINNING.
+;*
+            PLP
+            BNE TRYTRK
+;*
+;* WAIT FOR MOTOR SPEED TO COME UP.
+;*
+;    LST OFF
+;    DO DIAGMODE
+            LDY #TC2                                        
+            STY TL2                                         
+            LDY #0                                          
+            STY SCOUNT                                      
+            STY LCOUNT                                      
+            LDY #SP         ;SHUT OFF THE                   ; === Page 121 ===
+            STY TL12        ; LATENCY INDICATOR             
+;    FIN
+;    LST ON
+            LDY MONTIME+1   ;IF MOTORTIME IS POSITIVE,
+            BPL MOTORUP     ; THEN SEEK WASTED ENUFF TIME FOR US
+MOTOF       LDY #$12        ;DELAY 100 USEC PER COUNT
+CONWAIT     DEY
+            BNE CONWAIT
+            INC MONTIME                                     ; NOTE: MONTIME is never written to so this is a full 256 counter
+            BNE MOTOF
+            INC MONTIME+1
+            BNE MOTOF       ;COUNT UP TO $0000
+MOTORUP     = *
+;    LST OFF
+;    DO DIAGMODE
+            LDY #SP         ;SAY 'MOTOR RUNNING'            
+            STY TL2                                         
+;    FIN
+;    LST ON
+
+;=== RWTSTWO - Read Write Track Sector - Part 2, Page 122, T0S7 - T0S8, $BDAB .. $BEAE ===
+
+;*
+;* DISK IS NOW UP TO SPEED: READ IT!
+;* NOW CHECK: IF IT IS NOT THE FORMAT DISK COMMAND,
+;* LOCATE THE CORRECT SECTOR FOR THIS OPERATION.
+;*
+TRYTRK      = *
+            LDY #$0C                                        ; magic number IOB_OFFSET_CMD = $C
+            LDA (IOBPL),Y   ;GET COMMAND CODE #
+            BEQ GALLDONE    ;IF NULL COMMAND, GO HOME TO BED.   ;↓
+            CMP #$04        ;FORMAT THE DISK?                   ; magic number RWTS_CMD_FORMAT = $4 *sigh*
+            BEQ FORMDSK     ;ALLRIGHT,ALLRIGHT, I WILL...       ; If only the IBCMD commands were an enum instead of a dumb bitmask, see RWTS_CMD_*
+            ROR             ;SET CARRY=1 FOR READ, 0 FOR WRITE
+            PHP             ;AND SAVE THAT
+            BCS TRYTRK2     ;MUST PRENIBBLE FOR WRITE.
+;    LST OFF
+;    DO DIAGMOD
+        LDY #TC7            ;SAY 'PRENIBBLIZING'
+        STY TL7                                 
+;    FIN
+;    LST ON
+            JSR PRENIB16
+;    LST OFF
+;    DO DIAGMOD
+        LDY #SP             ;PRENIB FINISHED    
+        STY TL7                                 
+;    FIN
+;    LST ON
+TRYTRK2     LDY #$30        ;ONLY 48 RETRIES OF ANY KIND.
+            STY RETRYCNT
+TRYADR      LDX SLOT        ;GET SLOT NUM INTO X-REG
+;    LST OFF
+;    DO DIAGMOD
+        LDA #TC4            ;SAY 'READING ADDRESS'          
+        STA TL4                                             
+        LDA #SP             ;SAY 'NO ADDRESS ERROR' (YET)   
+        STA TL6                                             
+;    FIN
+;    LST ON
+            JSR RDADR16     ;READ NEXT ADDRESS FIELD        ; ^
+;    LST OFF
+;    DO DIAGMOD
+        LDA #SP             ;ADDRESS-READ DONE              
+        STA TL4                                             
+;    FIN
+;    LST ON
+            BCC RDRIGHT     ;IF READ IT RIGHT, HURRAH!      ; v
+;    LST OFF
+;    DO DIAGMOD
+        LDA #TC6            ;ADDRESS-READ DONE              
+        STA TL4                                             
+;    FIN
+;    LST ON
+TRYADR2     DEC RETRYCNT    ;ANOTHER MISTAEK!!              ; *spelling* Oh, the **irony**
+            BPL TRYADR      ; WELL, LET IT GO THIS TIME..   ; === page 123 ===
+;*
+;* RRRRRECALIBRATE !!!!
+;*
+RECAL       = *
+            LDA CURTRK
+            PHA             ;SAVE TRACK WE REALLY WANT      ; /sarcasm Nice to read VNOTRK * 2 phases/track
+            LDA #$60        ;RECALIBRATE ALL OVER AGAIN!    ; /sarcasm Yeah ... let's bang the user's drive head against
+            JSR SETTRK      ;PRETEND TO BE ON TRACK 96      ; the case -- that will make it work and won't cause
+            DEC RECALCCNT   ;ONCE TOO MANY??                ; any head alignment problems over time ... NOT!
+            BEQ DRVERR      ;TRIED TO RECALIBRATE TOO MANY TIMES, ERROR! ; v
+            LDA #MAXSEEKS   ;RESET THE
+            STA SEEKCNT     ; SEEK COUNTER
+            LDA #$00
+            JSR MYSEEK      ;MOVE TO TRACK 00               ; v
+            PLA
+RESEEK      JSR MYSEEK      ;GO TO CORRECT TRACK THIS TIME!
+            JMP TRYTRK2     ;LOOP BACK, TRY AGAIN ON THIS TRACK
+;*
+;* HAVE NOW READ
+;* MAKE SURE THIS IS THE TRACK, SECTOR, AND VOLUME DESIRED.
+;*
+RDRIGHT     LDY TRACK       ;ON THE RIGHT TRACK?
+            CPY CURTRK
+            BEQ RTTRK       ;IF SO, GOOD                    ;↓
+;* NO, DRIVE WAS ON A DIFFERENT TRACK. TRY
+;* RESEEKING/RECALIBRATING FROM THIS TRACK
+            LDA CURTRK      ;PRESERVE DESTINATION TRACK
+            PHA
+            TYA
+            JSR SETTRK
+            PLA
+            DEC SEKCNT      ;SHOULD WE RESEEK?
+            BNE RESEEK      ;=>YES, RESEEK                  ;↑ === T0S8 ===
+            BEQ RECAL       ;=>NO, RECALIBRATE!             ;↑
+;****
+DRVERR      PLA             ;REMOVE CURTRK
+            LDA #IBDERR     ;BAD DRIVE ERROR
+JMPTO1      PLP
+            JMP HNDLERR
+GALLDONE    BEQ ALLDONE                                     ;↓
+FORMDSK     JMP DSKFORM     ;=>GO TO IT!                    ;↓ WhyTF is FormatDisk in the middle here???
+;*
+;* DRIVE IS ON RIGHT TRACK, CHECK VOLUME MISMATCH
+;*
+RTTRK       LDY #3          ;IS THE RIGHT DISK IN?            ; magic number IOB_OFFSET_VOL = $03
+            LDA (IOBPL),Y   ;GET DESIRED VOLUM
+            PHA             ;PRESERVE DESIRED VOLUME#
+            LDA VOLUME      ;GET ACTUAL VOLUME HERE
+            LDY #$0E        ;TELL OPSYS WHAT VOLUME WAS THERE ; magic number IOB_OFFSET_MOD = $E
+            STA (IOBPL),Y
+            PLA             ;GET DESIRED VOLUME BACK
+            BEQ CORRECTVOL  ;DESIRED VOLUME 00 MATCHES ALL. ;↓
+            CMP VOLUME
+            BEQ CORRECTVOL  ;YUP, IT WAS RIGHT!             ;↓
+            LDA #IBVMME     ;HE SWITCHED DISCS!
+            BNE JMPTO1      ;ALWAYS TAKEN                   ;↑
+CORRECTVOL  = *
+            LDY #5                                          ; magic number IOB_OFFSET_SECTOR = $5
+            LDA (IOBPL),Y   ; TO ALLOW FOR INTERLEAVE
+            TAY
+            LDA INTRLEAV,Y  ;COMPUTE PHYSICAL SECTOR        ; DOS Sector Interleave/Skew Mapping
+            CMP SECT        ;DID WE GET THE SECTOR?         ; === Page 124 ===
+;    LST OFF
+;    DO DIAGMOD
+        BEQ GOTSECT         ;=>WE FOUND IT!                         
+        LDA #TC5            ;SAY 'LATENCY'                          
+        STA TL5                                                     
+        LDA SCOUNT          ;ARE WE WAITING FOR FIRST SECTOR?       
+        BEQ NOLAT           ;=>YES, LATENCY UNPREDICTABLE ANYWAY    
+        INC LCOUNT          ;NO, COUNT SECTORS MISSED               
+NOLAT   = *                                                       
+        JMP TRYADR2         ;NOW..GET CORRECT SECTOR..              
+;    ELSE
+;    LST ON
+            BNE TRYADR2     ;NO, KEEP TRYING.               ;↑
+;    FIN
+;*
+;* HOORAY! WE GOT THE RIGHT SECTOR!
+;*
+GOTSECT     = *
+;    LST OFF
+;    DO DIAGMOD
+        LDA #SP             ;SAY 'NO LATENCY'                   
+        STA TL5                                                 
+        INC SCOUNT          ;BUMP 'SECTORS-ACCESSED' COUNT      
+;    FIN
+;    LST ON
+            PLP
+            BCC WRIT        ;CARRY WAS SET FOR READ OPERATION. ;↓
+;    LST OFF
+;    DO DIAGMOD
+        LDA #TC9            ;SAY 'READING'                  
+        STA TL9                                             
+        LDA #SP             ;SAY 'NO READ ERROR' (YET)      
+        STA TL10                                            
+;    FIN
+;    LST ON
+            JSR READ16      ;CLEARED FOR WRITE
+;    LST OFF
+;    DO DIAGMOD
+        LDA #SP             ;READ FINISHED                  
+        STA TL9                                             
+;    FIN
+;    LST ON
+            PHP             ;SAVE STATUS OF READ OPERATION
+;    LST OFF
+;    DO DIAGMOD
+        BCC GOODREAD        ;NO ERROR                       
+        LDA #TC10           ;SAY 'READ ERROR'               
+        STA TL10                                            
+        JMP TRYADR2         ;RETRY ON ERROR                 
+;*                                                           
+GOODREAD = *                                              
+;    ELSE
+;    LST ON
+            ;BCS TRYADR2     ;CARRY SET UPON RETURN IF BAD READ 
+;    FIN
+            PLP             ;CAREFUL OF STACK
+            LDX #0          ;SET TO POSTNIBLIZE
+            STX T0          ; All 256 BYTES OF THE SECTOR
+;    LST OFF
+;    DO DIAGMOD
+        LDA #TC11           ;SAY 'POSTINIBBLIZING'          ;POST_IN_NIBBLIZING
+        STA TL11                                            
+;    FIN                                                     ; === Page 125 ===
+;    LST ON
+            JSR POSTNB16    ;DECODE INTO REAL WORLD DATA
+;    LST OFF
+;    DO DIAGMOD
+        LDA #SP             ;POSTNIB COMPLETED              
+        STA TL11                                            
+;    FIN
+;    LST ON
+            LDX SLOT        ;RESTORE SLOTNUM INTO X         ; I never would have guessed ...
+ALLDONE     CLC
+            ;DFB $24         ;SKIP OVER NEXT BYTE WITH BIT OPCODE        ; BIT $zp
+	    .byt $24
+HNDLERR     SEC             ;INDICATE AN ERROR
+            LDY #$0D        ;GIVE HIM ERROR#                ; magic number IOB_OFFSET_ERROR = $D
+            STA (IOBPL),Y
+            LDA MOTOROFF,X  ; TURN IT OFF...
+;    LST OFF
+;    DO DIAGMOD
+;* AVERAGE LATENCY = LCOUNT/SCOUNT                           
+        LDA LCOUNT          ; GET TOTAL LATENCY             
+        LDY #0              ; CLEAR QUOTIENT                
+DIVIDE  = *                                               
+        CMP SCOUNT          ; DONE?                         
+        BCC PRTLAT          ; =>YES.PRINT IT                
+        SBC SCOUNT          ; REMOVE SCOUNT                 
+        INY                 ; INCREMENT QUOTIENT            
+        BNE DIVIDE                                          
+;*                                                           
+PRTLAT  TYA                                                 ; Print Latency
+        AND #$0F            ; MAX LATENCY=15                
+        ORA #$B0            ; MAKE ASCII                    ; NO, this is make Apple Text; ASCII = $00..$7F
+        CMP #$BA            ; IS IT A-F                     
+        BCC PRTL2           ;=>NO                           
+        ADC #6              ;ADD 7 (INCLUDES CARRY)         
+PRTL2   STA TL12            ;STUFF LATENCY COUNT            
+        LDA #SP             ; SAY 'RWTS NOT ACTIVE'         
+        STA TL1                                             
+;    FIN
+;    LST ON
+            RTS
+WRIT        = *
+;    LST OFF
+;    DO DIAGMOD
+       LDA #TC8             ; SAY 'WRITING'                 
+       STA TL8                                              
+;    FIN
+;    LST ON
+            JSR WRITE16     ;WRITE NYBBLES NOW              ; ^ WRITRTN, page 137
+
+;    LST OFF
+;    DO DIAGMOD
+       LDA #SP              ;WRITE FINISHED                 
+       STA TL8                                              
+;    FIN
+;    LST ON
+            BCC ALLDONE     ;IF NO ERRORS.
+            LDA #IBWPER     ;DISK IS WRITE PROTECTED!!
+            BCS HNDLERR     ;ALWAYS TAKEN
+;*
+;* THIS IS THE 'SEEK' ROUTINE
+;*  SEEKS TRACK 'N' IN SLOT #X/$10
+;* IF DRIVNO IS NEGATIVE, ON DRIVE 1
+;* IF DRIVNO IS POSITIVE, ON DRIVE 2
+;*
+MYSEEK      PHA             ; AND PRESERVE A-REGISTER       ; === Page 126 === Uhm, OK, Captain Obvious
+;    LST OFF
+;    DO DIAGMOD
+        LDA #TC3            ;SAY 'SEEKING'                  
+        STA TL3                                             
+;    FIN
+;    LST ON
+            LDY #$01        ;IS THIS A TWO-PHASE DISC?      ; magic number DCT_OFFSET_TYPE = $1
+            LDA (DEVCTBL),Y
+            ROR             ;GET # OF PHASES INTO CARRY
+            PLA
+            BCC MYSEEK2     ;IF ONE PHASE PER TRACK
+            ASL  
+            JSR MYSEEK2
+            LDA CURTRK      ;DIVIDE BACK DOWN
+;    LST OFF
+;    DO DIAGMOD
+        LDA #SP                                             
+        STA TL3             ;SEEK DONE                      
+;    FIN
+;    LST ON
+            RTS
+MYSEEK2     STA TRKN        ;SAVE DESTINATION TRACK(*2)     ;
+            JSR XTOY        ;SET Y=SLOT#
+            LDA DRV1TRK,Y
+            BIT DRIVNO
+            BMI WASD0       ;IS MINUS, ON DRIVE ZERO
+            LDA DRV2TRK,Y
+WASD0       STA CURTRK      ;THIS IS WHERE I AM             ; Going to resist cheap shot here
+            LDA TRKN        ;AND WHERE I'M GOING TO         ; But I will point out crappy var names and better ones:
+            BIT DRIVNO      ;NOW UPDATE SLOT DEPENDENT      ;   SRC_TRK
+            BMI ISDRV1      ;LOCATIONS WITH TRACK           ;   DST_TRK
+            STA DRV2TRK,Y   ;INFORMATION
+            BPL GOSEEK      ;ALWAYS TAKEN
+ISDRV1      STA DRV1TRK,Y
+GOSEEK      JMP SEEK        ;GO THERE!
+XTOY        TXA
+            LSR  
+            LSR  
+            LSR  
+            LSR  
+            TAY
+            RTS
+;*
+;* THIS SUBROUTINE SETS THE SLOT DEPENDENT TRACK
+;* LOCATION.
+;*
+SETTRK      PHA             ;PRESERVE DESTINATION TRACK
+            LDY #$02                                        ; magic number IOB_OFFSET_DRIVE = $2
+            LDA (IOBPL),Y
+            ROR             ;GET DRIVE # INTO CARRY
+            ROR DRIVNO      ;INTO (DRIVNO)
+            JSR XTOY        ;SET UP Y-REG
+            PLA
+            ASL             ;ASSUME TRACK IS HELD*2
+SETTRK2     BIT DRIVNO                                      ; unused label
+            BMI ONDRV1      ;IF ON DRIVE 1(1), DRIVNO MINUS
+            STA DRV2TRK,Y
+            BPL SETRTS
+ONDRV1      STA DRV1TRK,Y
+SETRTS      RTS
+

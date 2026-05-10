@@ -1,0 +1,28 @@
+
+/*  Parameter zum Aufruf RWSEC          */
+                                          
+#define   RW_DRV    0                     
+#define   RW_SIDE   1                     
+#define   RW_TRCK   2                     
+#define   RW_SEC    3                     
+#define   RW_ADR    4                     
+#define   RW_SLEN   6                     
+
+/*   Parameter zum Aufruf von DFORMAT   */                                    
+                                                                              
+#define   FMT_VIRG  0                                                         
+#define   FMT_SIDES 1                                                         
+#define   FMT_TRCKS 2                                                         
+#define   FMT_HDFL  3                                                         
+#define   FMT_BLEN  4                                                         
+#define   FMT_SCLST 5    /* Anzahl Sektoren+1, sekt1, sekt2, sekt3... */      
+
+#define E_CMD   <-96     
+#define E_Q     <-97     
+#define E_GT    <-98     
+#define E_RD    <-99     
+#define E_WR    <-100    
+#define E_FT    <-101    
+
+#define	E_ILLPAR <-1
+

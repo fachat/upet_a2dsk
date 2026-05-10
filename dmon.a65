@@ -1,0 +1,822 @@
+
+/****************************************************************************
+  
+    Disk monitor code
+ 
+    From: OS/A65 Version 2.0.0
+    Multitasking Operating System for 6502 Computers
+
+    Copyright (C) 1989-2026 Andre Fachat 
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+****************************************************************************/
+
+
+/***************************************************************************
+ * 
+ * Generic disk monitor 
+ *
+ */
+
+
+#define   MA   0
+#define   MB   1
+
+          .(
+;#include  "kdefs.i65"
+;#include  "kernel.i65"
+;#include  "lib6502.i65"
+
+	.word $0401
+	*=$0401
+	.word link
+	.word 10
+	.byt $9e, "1040",0
+link	.word 0
+	.dsb 1040-*
+	jmp PRG
+
+/*************************************************************************/
+
+#include "dmon.i65"
+
+
+#define   MEBYT     ":"
+#define   ABPZ      #8
+#define   MESSAGE   "-"
+#define   MAXLEN    64
+#define   BUFLEN    8192
+
+/*************************************************************************/
+
+/* map oldlib code to apps/common.a65 */
+#define	Txtout	strout
+#define	Putc	chrout
+#define	Crlfout	crlfout
+
+chrout	jmp $ffd2
+TERM	rts
+&YIELD	php
+	cli
+	nop
+	plp
+	rts
+GETC	
+fgetc	jmp $ffcf
+TC_CR	=13
+STDIN	=<-1
+STDCIN	=<-2
+E_EOF	=<-1
+
+	.bss
+buffer    .dsb 256
+
+IOBUF     .dsb MAXLEN
+LZEI      .byt 0
+	.text
+
+PRG       jsr DINIT
+          lda #<M0TXT
+          ldy #>M0TXT
+          jsr Txtout
+MXL       
+          JSR Crlfout:LDA #MESSAGE
+          JSR Putc
+          JSR MLINEIN:bcs termmon
+linex     jsr CHRGOT:beq MXL:bne mx1
+MO0       jsr CHRGET:beq MXL
+mx1       CMP #MESSAGE:BEQ MO0
+          jsr TOUPPER
+          LDX #0:MO3 CMP MONBEF,X:BEQ MO4
+          INX:CPX #ANZBEF:BCC MO3
+          JSR ERR
+          JMP MXL
+MOX       pla
+          pla
+termmon   lda #<MTTXT:ldy #>MTTXT:jsr Txtout
+#ifdef NOPRG
+          rts
+#endif
+          jmp TERM
+
+ERR       LDA #<M3TXT:LDY #>M3TXT:JSR Txtout:SEC:RTS
+MO4       INC LZEI
+          JSR MOEX
+          ;bcc mo4
+          ;jsr ERR
+mo4       JMP MXL
+MOEX      TXA:ASL:TAX:LDA MONADR+1,X
+          PHA:LDA MONADR,X:PHA:RTS
+
+ANZBEF    =14
+MONBEF    .asc "XRWMI",MEBYT,"LSOTFCBN"
+MONADR    .word MOX-1,mread-1,mwrite-1,MOM-1,BI-1,MOI-1
+          .word lread-1,lwrite-1
+          .word MOO-1,MOT-1,MOF-1,MOC-1,BB-1,MON-1
+
+M0TXT     .ASC 13,10,"C*"
+          .ASC 13,10,"DMON V"
+          .BYT MA+"0",".",MB+"0"
+          .asc " (c) A.Fachat",0
+M3TXT     .BYT " ","?",0
+MTTXT     .asc 13,10,"Bye!",13,10,0
+
+&m0rtxt    .asc 13,"reading",0
+&m0wtxt    .asc 13,"writing",0
+&m1txt     .asc " Block: Drive ",0
+&m2txt     .asc ", Side ",0
+&m3txt     .asc ", Track ",0
+&m4txt     .asc ", Sector ",0
+fmtxt     .asc 13,10,"Are you sure (J/N)?",0
+
+/**************************************************************************/
+
+          .(
+	.bss
+rwfl      .byt 0
+rwpar     .dsb RW_SLEN
+rwp2      .dsb RW_SLEN
+rwp3      .dsb RW_SLEN
+	.text
+
+&mread    ldx #0
+          .byt $2c
+&mwrite   ldx #1
+          .(
+          stx rwfl
+          jsr GETADR
+          bcs rwerr
+          sta rwpar+RW_DRV
+          jsr GETADR
+          bcs rwerr
+          sta rwpar+RW_SIDE
+          jsr GETADR
+          bcs rwerr
+          sta rwpar+RW_TRCK
+          jsr GETADR
+          bcs rwerr
+          sta rwpar+RW_SEC
+          lda #<buffer
+          sta rwpar+RW_ADR
+          lda #>buffer
+          sta rwpar+RW_ADR+1
+          jsr GETADR
+          bcs goon
+          sta rwpar+RW_ADR
+          stx rwpar+RW_ADR+1
+goon
+          jsr Crlfout
+          lda #<rwpar
+          ldy #>rwpar
+          ldx rwfl
+          bne w
+          clc
+          .byt $24
+w         sec
+          jsr RWSEC
+rwerr     rts
+          .)
+
+&lread    ldx #0
+          .byt $2c
+&lwrite   ldx #1
+          .(
+          stx rwfl
+          jsr GETADR
+          bcs rwerrx
+          sta rwpar+RW_DRV
+          jsr GETADR
+          bcs rwerrx
+          sta rwp2+RW_SIDE
+          sta rwpar+RW_SIDE
+          jsr GETADR
+          bcs rwerrx
+          sta rwp3+RW_SIDE
+          jsr GETADR
+          bcs rwerrx
+          sta rwpar+RW_TRCK
+          sta rwp2+RW_TRCK
+          jsr GETADR
+          bcs rwerrx
+          sta rwp3+RW_TRCK
+          jsr GETADR
+          bcs rwerrx
+          sta rwpar+RW_SEC
+          sta rwp2+RW_SEC
+          jsr GETADR
+rwerrx    bcs rwerr
+          sta rwp3+RW_SEC
+          lda #<buffer
+          sta rwpar+RW_ADR
+          lda #>buffer
+          sta rwpar+RW_ADR+1
+          jsr GETADR
+          bcs goon
+          sta rwpar+RW_ADR
+          stx rwpar+RW_ADR+1
+goon
+          jsr Crlfout
+loop
+          lda #<rwpar
+          ldy #>rwpar
+          ldx rwfl
+          bne w
+          clc
+          .byt $24
+w         sec
+          jsr RWSEC
+          bcs rwerr
+
+          stx rwpar+RW_ADR
+          sty rwpar+RW_ADR+1
+          
+          inc rwpar+RW_SEC
+          lda rwpar+RW_SEC
+          cmp rwp3+RW_SEC
+          bcc loop
+          lda rwp2+RW_SEC
+          sta rwpar+RW_SEC
+
+          inc rwpar+RW_TRCK
+          lda rwpar+RW_TRCK
+          cmp rwp3+RW_TRCK
+          bcc loop
+          lda rwp2+RW_TRCK
+          sta rwpar+RW_TRCK
+
+          inc rwpar+RW_SIDE
+          lda rwpar+RW_SIDE
+          cmp rwp3+RW_SIDE
+          bcs l3
+          jmp loop
+
+l3        clc       
+rwerr     rts
+          .)
+          
+&MON      .(             ;format drive format 
+          jsr GETADR
+          bcs moe
+          sta rwpar      ;drv
+          jsr GETADR
+          bcs moe
+          sta rwpar+1
+          
+          lda #<fmtxt
+          ldy #>fmtxt
+          jsr Txtout
+          jsr MLINEIN
+          jsr CHRGOT
+
+          pha
+          jsr Putc
+          pla
+
+          cmp #"j"
+          beq format
+          cmp #"J"
+          bne moe
+format    ldx rwpar
+          lda rwpar+1
+          jsr DFORMAT
+          bcs moe
+          rts          
+moe       jmp ERR
+          .)
+          .)
+
+/**************************************************************************/
+
+	.zero
+Z1        .word 0
+Z2        .word 0
+Z3        .word 0
+	.text
+
+MOM       .(
+          JSR GET12:BCS MOME:;jsr setout
+/*
+          lda #<buffer
+          clc
+          adc Z1
+          sta Z1
+          lda #>buffer
+          adc Z1+1
+          sta Z1+1
+          
+          lda #<buffer
+          clc
+          adc Z2
+          sta Z2
+          lda #>buffer
+          adc Z2+1
+          sta Z2+1
+*/          
+30150 MOM1 JSR MOMZO
+          jsr Serbrk:bcs MOME
+30160 LDA ABPZ:JSR ADCMP:BCC MOM1
+30170 MOME RTS
+30180 MOMZO JSR Crlfout:LDA #MEBYT:JSR MASOUT
+30220 LDY #0:beq mom2:MOM2 jsr SSPOUT:mom2 LDA (Z1),Y
+30230 JSR SBYTO:INY:CPY ABPZ:BNE MOM2
+          lda #":":jsr Putc
+30240 LDY #0:MOM3 LDA (Z1),Y
+30250 TAX:AND #127:CMP #32:BCS MOM4
+30260 LDX #".":MOM4 TXA:JSR Putc
+30270 INY:CPY ABPZ:BNE MOM3
+30280 RTS
+          .)
+
+BB        .(
+          JSR GET12:BCS MOBE:;jsr setout
+MOB1      JSR MOBZO
+          jsr Serbrk:bcs MOBE
+          LDA #1:JSR ADCMP
+          BCC MOB1
+MOBE      RTS
+MOBZO     JSR Crlfout:LDA #MEBYT:JSR MASOUT
+          LDY #0
+          LDA (Z1),Y
+          JMP SBINBO         
+          .)
+
+BI        .(
+          JSR GETADR:bcs MOIE
+          sta Z1:stx Z1+1
+/*          clc:adc #<buffer: sta Z1
+          txa:adc #>buffer:sta Z1+1
+*/
+          jsr CHRGOT:bne MOI0
+          lda #MEBYT
+          ldy #0
+          jmp MOINL
+
+&MOI      JSR GETADR:bcs MOIE
+          sta Z1:stx Z1+1
+/*          clc: adc #<buffer:sta Z1:txa:adc #>buffer:sta Z1+1
+*/
+          jsr CHRGOT
+          beq MOIE
+MOI0      LDA #0:STA Z2
+MOI1      JSR GETADR:LDY Z2:BCS MOINL
+          STA (Z1),Y:INC Z2
+          JMP MOI1
+MOIE      RTS
+          
+MOINL     LDA #0
+          STA Z2
+          LDA #MEBYT
+          JSR INLOOP
+          BCC MOI1
+          cmp #0
+          clc
+          beq MOIE
+          pla
+          pla
+          jmp linex
+          .)
+
+          .(
+&MOC3     JSR GETADR:BCS MOCX
+          STA Z1:STX Z1+1
+          JSR GETADR:BCS MOCX
+          STA Z2:STX Z2+1
+          JSR GETADR:BCS MOCX
+          STA Z3:STX Z3+1:RTS
+          
+&MOC      JSR MOC3:BCS MOCE:;jsr setout:JSR Crlfout
+30570 MOC2 LDY #0:LDA (Z1),Y:CMP (Z3),Y
+30580 BEQ MOC1:LDA Z1:LDX Z1+1
+30590 JSR SADRO:JSR SSPOUT
+30600 MOC1 LDA #1:JSR ADCMP:BCS MOCX
+30610 INC Z3:BNE MOC2:INC Z3+1
+30620 JMP MOC2
+30630 MOCX RTS
+30640 MOCE jmp ERR
+          .)
+
+MOF       .(
+          ldy LZEI:lda IOBUF,y:pha:beq mofex
+          cmp #" ":beq mof00:inc LZEI
+mof00     jsr GETADR:sta Z1:stx Z1+1:bcs mofex
+          jsr GETADR:sta Z2:stx Z2+1:bcs mofex
+          pla:cmp #" ":bne mofother
+          
+          lda #0:sta Z3
+mof0      jsr GETADR:bcs mofn
+          ldx Z3:sta IOBUF,x:inc Z3
+          bne mof0          
+
+mofn      ldy LZEI:lda IOBUF,y
+          cmp #34:bne mofnx
+          ldx Z3
+mofn1     iny
+          lda IOBUF,y
+          beq mofn2
+          cmp #34
+          beq mofn2a
+          sta IOBUF,x
+          inx
+          bne mofn1
+mofn2a    iny
+mofn2     sty LZEI
+          stx Z3
+          bne mof0
+          
+mofnx     lda Z3:beq mofe
+
+          jsr Crlfout
+mof1      ldy #0
+mofl      lda (Z1),y
+          cmp IOBUF,y
+          bne mof2
+          iny
+          cpy Z3:bcc mofl
+          lda Z1:ldx Z1+1:jsr SADRO
+          jsr SSPOUT
+mof2      lda #1:jsr ADCMP:bcc mof1
+          rts
+mofex     pla
+&mofe      jmp ERR
+
+mofother  =*-3
+          .)
+          
+MOT       .(
+          JSR MOC3:BCS mofe;MOCEO
+30710 LDA Z3+1:CMP Z2+1:BCC MOT1
+30720 BNE MOTA:LDA Z3:CMP Z2:BCS MOTA
+30730 MOT1 LDA Z3+1:CMP Z1+1
+30740 BCC MOTA:BNE MOTB
+30750 LDA Z3:CMP Z1:BCS MOTB
+30760 MOTA LDY #0:LDA (Z1),Y
+30770 STA (Z3),Y:INC Z3:BNE MOT2
+30780 INC Z3+1:MOT2 LDA #1:JSR ADCMP
+30790 BNE MOTA:RTS
+
+30800 MOTB LDA Z3:CLC:ADC Z2:STA Z3
+30810 LDA Z3+1:ADC Z2+1:STA Z3+1
+30820 LDA Z3:SEC:SBC Z1:STA Z3
+30830 LDA Z3+1:SBC Z1+1:STA Z3+1:jmp MOT3a
+30840 MOT3 LDY #0:LDA (Z2),Y:STA (Z3),Y
+30850 MOT3a LDA Z2:BNE MOT4:DEC Z2+1
+30860 MOT4 DEC Z2
+30870 LDA Z3:BNE MOT5:DEC Z3+1
+30880 MOT5 DEC Z3
+30890 JSR COMP
+30895 BCC MOT3:BEQ MOT3:RTS
+          .)
+
+MOO       .(
+          JSR GETADR:BCS MOCEO
+30906 STA Z1:STX Z1+1
+30907 JSR GETADR:BCS MOCEO
+30908 STA Z2:STX Z2+1
+30910 JSR GETADR:BCC MOO1
+30920 LDA #0:MOO1 STA Z3
+30930 MOO2 LDY #0:LDA Z3:STA (Z1),Y
+30940 LDA #1:JSR ADCMP:BCC MOO2
+30950 RTS
+          .)
+
+/**************************************************************************/
+
+SBINBO    .(
+          STX Z3
+          pha
+          LDA #"%"
+          JSR Putc
+          pla
+          LDX #8
+s2        ASL
+          PHA
+          BCC s1
+          lda #"1"
+          .byt $2c
+s1        lda #"0"
+          jsr Putc
+          pla
+          dex
+          bne s2
+          ldx Z3
+          rts
+          .)
+          
+MOCEO     jmp ERR
+
+GET12     .(
+          JSR GETADR
+          BCS GBDX
+          STA Z1:STX Z1+1
+          STA Z2:STX Z2+1
+          JSR GETADR
+          BCS GBD1
+          STA Z2:STX Z2+1
+GBD1      CLC
+GBDX      RTS
+          .)
+
+MASOUT    PHA
+          LDA #MESSAGE
+          JSR Putc
+          PLA
+          JSR Putc
+          LDA Z1
+/*          sec
+          sbc #<buffer
+          pha          
+          LDa Z1+1
+          sbc #>buffer
+          tax
+          pla
+*/
+          ldx Z1+1
+          JSR SADRO
+          JMP SSPOUT
+
+SSBOUT    JSR SBYTO
+          JMP SSPOUT
+
+SADRO     PHA:TXA:JSR SBYTO:PLA
+SBYTO     PHA:LSR:LSR:LSR:LSR
+          JSR SNIBO:PLA:AND #$0F
+SNIBO     CLC:ADC #"0":CMP #"9"+1
+          BCC SNO1:ADC #6:SNO1 JMP Putc
+          
+SSPOUT    LDA #" ":JMP Putc
+
+          .(
+&ADD      CLC
+          ADC Z1
+          STA Z1
+          LDA #0
+          ADC Z1+1
+          STA Z1+1
+          rts
+&ADCMP    jsr ADD
+          bcs cs
+&COMP     lda Z1+1
+          CMP Z2+1
+          bne cs
+          lda Z1    
+          cmp Z2
+cs        rts
+          .)
+
+         
+INLOOP    .(
+          PHA
+          TYA
+          CLC
+          ADC Z1
+          STA Z1
+          LDA #0
+          ADC Z1+1
+          STA Z1+1
+          JSR Crlfout
+          PLA
+          JSR MASOUT
+          JSR MLINEIN
+          ldy #<-1
+il1       iny
+          lda IOBUF,y
+          beq ils
+          cmp #MESSAGE   ; zeile gewechselt
+          beq ils
+          cmp #" "
+          beq il1   
+          sty LZEI
+          clc
+          rts
+ils       
+          sec
+          rts
+          .)
+
+/**************************************************************************/
+
+TOUPPER   .(
+          cmp #"a"
+          bcc tok
+          cmp #"z"+1
+          bcs tok
+          sbc #$1f
+tok       rts
+          .)
+/*
+LINEFEED  LDA #10:.BYT $2C
+#ifndef NOSYSFKT
+PNTOUT    lda #".":.byt $2c
+#endif
+#ifndef NOMON
+CROUT     LDA #13:.BYT $2C
+#endif
+SSPOUT    LDA #" ":JMP Putc
+*/
+          .(
+	.bss
+div       .byt 0
+Z0        .word 0
+	.text
+
++CHRGET   inc LZEI
++CHRGOT   sty div
+          ldy LZEI
+          LDA IOBUF,Y
+          LDY div
+          CMP #" "
+          BEQ CHRGET
+          CMP #0
+          RTS
+
++GETADR   LDY LZEI:LDA #0:STA Z0:STA Z0+1
+GA1       LDA IOBUF,Y:bne get
+          jmp GAE
+get       INY
+          CMP #" ":BEQ GA1
+
+          CMP #"%"
+          BEQ GETBIN
+          cmp #"."
+          beq GETDEZ1
+          cmp #"$"
+          beq GETHEX
+          cmp #"&"
+          beq GETOKT
+          DEY
+          JMP GETHEX
+
+GETDEZ1   jmp GETDEZ
+
+GETHEX    lda IOBUF,y
+          jsr tsthex
+          bcs gae
+GA2       INY
+          ASL Z0:ROL Z0+1:ASL Z0:ROL Z0+1
+          ASL Z0:ROL Z0+1:ASL Z0:ROL Z0+1
+          ORA Z0:STA Z0
+          LDA IOBUF,Y
+          jsr tsthex
+          bcc GA2
+          jmp GAE1
+
+gae       jmp GAE
+
+gb1       SEC:SBC #"0"
+          CMP #2
+          BCS GAE1
+          iny
+          lsr
+          rol Z0:rol Z0+1
+GETBIN    lda IOBUF,Y
+          beq GAE1
+          bne gb1
+
+go1       sec:sbc #"0"
+          cmp #8
+          bcs GAE1
+          iny
+          asl Z0:rol Z0+1
+          asl Z0:rol Z0+1
+          asl Z0:rol Z0+1
+          ora Z0:sta Z0
+GETOKT    lda IOBUF,y
+          beq GAE1
+          bne go1
+          
+gd1       sec:sbc #"0"
+          cmp #10
+          bcs GAE1
+          iny
+          pha
+          asl Z0:rol Z0+1
+          lda Z0:ldx Z0+1
+          asl Z0:rol Z0+1
+          asl Z0:rol Z0+1
+          clc:adc Z0:sta Z0
+          txa:adc Z0+1:sta Z0+1
+          pla
+          clc
+          adc Z0
+          sta Z0
+          bcc GETDEZ
+          inc Z0+1
+GETDEZ    lda IOBUF,y
+          beq GAE1
+          bne gd1
+
+GAE1      LDA Z0:LDX Z0+1
+          CLC:sty LZEI
+          rts
+
+GAE       SEC
+          lda IOBUF,y
+          STY LZEI
+          RTS
+          .)
+          
+&tsthex   .(
+          cmp #"A"-1
+          bcs th1
+          sbc #"0"-1
+          cmp #10
+          bcc thok
+therr     sec
+          rts
+th1       beq therr
+          and #%00011111
+          cmp #7
+          bcs therr
+          adc #9
+thok      clc
+          rts
+          .)
+
++MLINEIN  .(
+#ifndef NOSH
+	.bss
+li1       .byt 0
+	.text
+#endif
+          LDY #0
+MO1       
+          ldx #STDIN
+          jsr GETC
+          bcc mo1a
+          cmp #E_EOF
+          beq MO2S
+          jsr DLOOP
+          jsr YIELD
+          jmp MO1
+
+mo1a      cmp #$1f
+          bcs MO1A
+
+          CMP #TC_CR:BEQ MO2
+
+          CMP #8:BNE MO1
+          cpy #0:beq MO1
+          dey
+          jsr Putc
+/*#ifdef SHOW         
+          ldx #STDERR
+          jsr OUT
+#endif*/
+          jmp MO1
+
+MO1A      STA IOBUF,Y
+          jsr Putc
+/*#ifdef SHOW
+     ldx #STDERR
+     jsr OUT
+#endif*/
+          INY:CPY #MAXLEN
+          BCC MO1:bcs MO2
+MO2S      sec:.byt $24
+MO2       CLC
+/*#ifdef SHOW
+          php
+          lda #13
+          ldx #STDERR
+          jsr OUT
+          lda #10
+          jsr OUT
+          plp
+#endif*/
+          LDA #0:STA IOBUF,Y
+          sta LZEI
+          RTS
+          .)
+          
+/*************************************************************************/
+
+	; see if we got something from the console
+	; TODO - need to check for SIG_BRK
+Serbrk	ldx #STDCIN
+	clc
+	jsr fgetc
+	; invert C
+	bcc nok
+	clc
+	.byt $24
+nok	sec
+	rts
+
+
+#include "common.a65"
+
+ende      .)
+          
