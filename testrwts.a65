@@ -1,0 +1,114 @@
+
+	.word $0401
+	*=$0401
+	.word link
+	.word 10
+	.byt $9e, "1040", 0
+link	.word 0
+
+	.dsb 1040-*
+	*=
+
+	sei
+
+	jsr upet_init
+
+	jsr ALL_OFF
+
+	jsr DINIT
+
+	jsr ENTRY
+
+	jsr ALL_OFF
+
+	cli
+
+	rts
+
+
+
+upet_init .(
+	lda #%00000001		; map $9000 to external mem bus
+	sta $e804
+
+	lda #%10000000		; 1 MHz, and don't hide bogus cycles in phase 1 
+	sta $e803
+
+	ldx #0
+	rts
+	.)
+
+
+IWM_PH0_OFF   =     $90f0             ;stepper motor control                           
+IWM_PH0_ON    =     $90f1             ;stepper motor control                           
+IWM_MOTOR_OFF =     $90f8             ;starts drive spinning                           
+IWM_MOTOR_ON  =     $90f9             ;starts drive spinning                           
+IWM_SEL_DRIVE_1 =   $90fa             ;selects drive 1                                 
+IWM_Q6_OFF    =     $90fc             ;read                                            
+IWM_Q7_OFF    =     $90fe             ;WP sense/read                                   
+;MON_WAIT      =     $fca8             ;delay for (26 + 27*Acc + 5*(Acc*Acc))/2 cycles  
+;MON_IORTS     =     $ff58             ;JSR here to find out where one is               
+                                                                                       
+ALL_OFF	.(
+	ldx #0
+	; switch off all phases
+	lda PHASEOFF,x
+	lda PHASEOFF+2,x
+	lda PHASEOFF+4,x
+	lda PHASEOFF+6,x
+	; switch off motor
+	lda MOTOROFF,x
+	lda DRV1EN,x
+	; Q6/Q7
+	lda Q6L,x
+	lda Q7L,x
+	rts
+	.)
+
+ENTRY	.(
+	lda #>IOB
+	ldy #<IOB
+	jsr RWTS
+
+	lda IOB+13	; error return?
+	jsr hexout
+	rts
+
+hexout	pha
+	lsr
+	lsr
+	lsr
+	lsr
+	jsr nibout
+	pla
+	and #$0f
+nibout	ora #$30
+	jmp $ffd2
+
+IOB	.byt 1		; IBTYPE
+	.byt $0		; IBSLOT - slot number (actual X index in I/O) for access
+	.byt 1		; IBDRVN - drive number (1 or 2)
+	.byt 0		; IBVOL - expected volume number (0=match all)
+	.byt 0		; IBTRK	- track
+	.byt 1		; IBSECT - sector
+	.word IBDCT	; IBDCTP - pointer to device characteristics table
+	.word databuf	; IBBUFP - pointer to data buffer
+	.word 512	; IBDLEN - length of data to process (in bytes)
+	.byt 1		; IBCMD - command (0=/, 1= read sect, 2= write sect, 4= fmt dsk)
+	.byt 0		; IBSMD - output: volume number actually found / or error
+	.byt 0		; IOBPSN - output: previous slot number
+	.byt 0		; IOBPDN - output: previous drive number
+
+IBDCT	.byt 0		; device type code (0 for Disk II)
+	.byt 2		; phases per track during seek (2 for Disk II)
+	.word 1		; Motor on delay in 100us
+
+	.)
+
+	.align 256
+
+databuf	=$8100
+
+#include "a2drv.a65"
+
+
