@@ -7,6 +7,8 @@
  
 ; =new PET; =original apple 
 
+#define	DIAGMODE
+
 T0	=$1f	;=$26
 
 COUNT	=$20	;$26
@@ -59,17 +61,17 @@ TRKN        = $59	;$2A         ;DESIRED TRACK.
 SLOTTEMP    = $5a	;$2B         ;SLOT NUM TIMES $10.
 ;CRKTRK      = $478        ;CURRENT TRACK ON ENTRY.         ; "Current Track" Drive 1, Why is this defined AGAIN? DRV1TRK
 
-BUF	    = $5b	;$3e	     ; Pointer to buffer (2 bytes)
+BUF	    = PTRSDEST+2	;$3e	     ; Pointer to buffer (2 bytes)
 
 ;DRV1TRK     = $478                                        ; Text screen hole
 ;DRV2TRK     = $4F8                                        ; Text screen hole
 IOBPL       = $5c	;$48         ; Pointer (2 bytes)
 IOBPH       = $5d	;$49         ;
 ;SLOT        = $5F8        ;HOLDS SLOT NUM USED            ;
-PTRSDEST    = $5e	;$3C                                         ;
+PTRSDEST    = $5e	;$3C                              ; 4 bytes
 DEVCTBL     = PTRSDEST                                    ; $3C is pointer to Device Characteristics Table. See DCT
-DRIVNO      = $60	;$35                              ;      [0] Device Type -- never used --
-MONTIME     = $61	;$46                              ;      [1] Phases Per Track
+DRIVNO      = $62	;$35                              ;      [0] Device Type -- never used --
+MONTIME     = MONTIMEL	;$46                              ;      [1] Phases Per Track
 SECT        = CSSTV+1                                     ; $2D  [2] Motor On Delay Low -- never used --
 TRACK       = CSSTV+2                                     ; $2E  [3] Motor On Delay High
 VOLUME      = CSSTV+3                                     ; $2F
@@ -80,8 +82,8 @@ SEKCNT	    .byt 0
 CURTRK	    .byt 0
 RECALCCNT   .byt 0
 
-DRV1TRK     .dsb 128	; why so many?
-DRV2TRK     .dsb 128
+DRV1TRK     .dsb 8	; slot I/O index divided by 16
+DRV2TRK     .dsb 8
 CRKTRK      = DRV1TRK        ;CURRENT TRACK ON ENTRY.        ; "Current Track" Drive 1, Why is this defined AGAIN? DRV1TRK
 SLOTABS	    .word 0
 SLOT	    .byt 0
@@ -156,9 +158,9 @@ ASC2        = *           ;TELL RELOCTR WHERE RWTS BEGINS
 ;* DIAGMODE EQUATES...                                        
 ;*                                                            
 SP          = $A0         ;SPACE (INDICATOR OFF)           
-TD          = 4           ;DISPL BETWEEN CHARS             
+TD          = 2           ;DISPL BETWEEN CHARS             
 TC1         = $1E         ;^ - RWTS ACTIVE                 
-TL1         = $07D0                                        ; VTAB 24: HTAB 1
+TL1         = $8000	;$07D0                                        ; VTAB 24: HTAB 1
 TC2         = $0D         ;M - MOTOR STARTUP               
 TL2         = TL1+TD                                       
 TC3         = $13         ;S - SEEK IN PROGRESS            
@@ -219,7 +221,7 @@ TL12        = TL11+TD     ;LATENCY POSITION
 ;*       TO USE THIS TIME *
 ;*                        *
 ;* IBDCTP: POINTER TO THE *
-;*       DEVICE CHARACTER-*                                  ; Really? You HAD to indent the line and force an artificial word break when it fits??
+;*       DEVICE CHARACTER-*
 ;*       ISTICS TABLE.    *
 ;*                        *
 ;* IBBUFP: POINTER TO THE *
@@ -249,7 +251,7 @@ TL12        = TL11+TD     ;LATENCY POSITION
 ;*       FOUND.           *
 ;*                        *
 ;* IOBPSN: PREVIOUS SLOT  *
-;*      NUMBER USED LAST  *                                  ; Why isn't the first word aligned with the colon???
+;*      NUMBER USED LAST  *
 ;*      ACCESS.           *
 ;*                        *
 ;* IOBPDN: PREVIOUS DRIVE *
@@ -1751,5 +1753,7 @@ DNIBL	; uses bytes $96-$ff
 ;XP          EQU <*          ;CURRENT PAGE ADDRESS           ; $BA96..$BAFF table data
 ;DNIBL       EQU 256*XP      ;DNIBL  TABLE PAGE              ; See READ4
 
+
+DINIT	rts
 
 
