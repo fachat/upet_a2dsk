@@ -1,24 +1,29 @@
 
 ; from: https://htmlpreview.github.io/?https://github.com/Michaelangel007/apple2_dos33/blob/master/dos33.html#Listing
 
-; original apple 
-T0	=$26
+; PET can use:
+; $1f-$27 (including)
+; $54-$6f (including)
+ 
+; =new PET; =original apple 
 
-COUNT	=$26
-LAST	=$26
-CSUM	=$27
-CSSTV	=$2c
+T0	=$1f	;=$26
 
-NSECT	=$3f
+COUNT	=$20	;$26
+LAST	=COUNT	;$26
+CSUM	=$21	;$27
+CSSTV	=$22	;$2c	; 4 byte $2c-$2f
 
-AA	=$3e	; timing constant
-NVOL	=$41	; volume number
-TRK	=$44
-NSYNC	=$45
+NSECT	=$26	;$3f
+
+AA	=$27	;$3e	; timing constant
+NVOL	=$54	;$41	; volume number
+TRK	=$55	;$44
+NSYNC	=$56	;$45
 
 ;*   ---- MSWAIT ----   *
-MONTIMEL    = $46         ;MOTON-ON TIME
-MONTIMEH    = $47         ;COUNTERS.
+MONTIMEL    =$57	;$46         ;MOTON-ON TIME
+MONTIMEH    =$58	;$47         ;COUNTERS.
 
 ;************************
 ;*                      *
@@ -29,9 +34,9 @@ MONTIMEH    = $47         ;COUNTERS.
 ;*       'NIBL'.        *
 ;*                      *
 ;************************
-WTEMP       = $26         ;TEMP FOR DATA AT NBUF2,0.
-SLOTZ       = $27         ;SLOTNUM IN Z-PAG LOC.           ; === Page 26 ===
-SLOTABS     = $678        ;SLOTNUM IN NON-ZPAG LOC.
+WTEMP       = COUNT	;$26         ;TEMP FOR DATA AT NBUF2,0.
+SLOTZ       = CSUM	;$27         ;SLOTNUM IN Z-PAG LOC.           ; === Page 26 ===
+;SLOTABS     = $678        ;SLOTNUM IN NON-ZPAG LOC.
 ;*
 ;************************
 ;*                      *
@@ -45,21 +50,50 @@ SLOTABS     = $678        ;SLOTNUM IN NON-ZPAG LOC.
 ;* OF DNIBL16 TABLE.    *
 ;*                      *
 ;************************
-IDX         = $26         ;INDEX INTO (BUF).
+IDX         = COUNT	;$26         ;INDEX INTO (BUF).
  
 ; ---- SEEK
-TRKCNT      = $26         ;HALFTRKS MOVED COUNT.
-PRIOR       = $27         ;PRIOR HALFTRACK.
-TRKN        = $2A         ;DESIRED TRACK.
-SLOTTEMP    = $2B         ;SLOT NUM TIMES $10.
-CRKTRK      = $478        ;CURRENT TRACK ON ENTRY.         ; "Current Track" Drive 1, Why is this defined AGAIN? DRV1TRK
+TRKCNT      = COUNT	;$26         ;HALFTRKS MOVED COUNT.
+PRIOR       = CSUM	;$27         ;PRIOR HALFTRACK.
+TRKN        = $59	;$2A         ;DESIRED TRACK.
+SLOTTEMP    = $5a	;$2B         ;SLOT NUM TIMES $10.
+;CRKTRK      = $478        ;CURRENT TRACK ON ENTRY.         ; "Current Track" Drive 1, Why is this defined AGAIN? DRV1TRK
 
-BUF	=$3e
+BUF	    = $5b	;$3e	     ; Pointer to buffer (2 bytes)
+
+;DRV1TRK     = $478                                        ; Text screen hole
+;DRV2TRK     = $4F8                                        ; Text screen hole
+IOBPL       = $5c	;$48         ; Pointer (2 bytes)
+IOBPH       = $5d	;$49         ;
+;SLOT        = $5F8        ;HOLDS SLOT NUM USED            ;
+PTRSDEST    = $5e	;$3C                                         ;
+DEVCTBL     = PTRSDEST                                    ; $3C is pointer to Device Characteristics Table. See DCT
+DRIVNO      = $60	;$35                              ;      [0] Device Type -- never used --
+MONTIME     = $61	;$46                              ;      [1] Phases Per Track
+SECT        = CSSTV+1                                     ; $2D  [2] Motor On Delay Low -- never used --
+TRACK       = CSSTV+2                                     ; $2E  [3] Motor On Delay High
+VOLUME      = CSSTV+3                                     ; $2F
+MAXSEEKS    = 4           ;MAX FOR SEEKCNT                ;
 
 ; vars
-SEKCNT	.byt 0
-CURTRK	.byt 0
-RECALCCNT .byt 0
+SEKCNT	    .byt 0
+CURTRK	    .byt 0
+RECALCCNT   .byt 0
+
+DRV1TRK     .dsb 128	; why so many?
+DRV2TRK     .dsb 128
+CRKTRK      = DRV1TRK        ;CURRENT TRACK ON ENTRY.        ; "Current Track" Drive 1, Why is this defined AGAIN? DRV1TRK
+SLOTABS	    .word 0
+SLOT	    .byt 0
+
+SEEKCNT     .byt 0	;= $4F8        ;# RESEEKS BEFORE RECALIBRATE   ; Text screen hole, recycled with DRV2TRK
+RETRYCNT    .byt 0	;= $578                                        ; Text screen hole
+RECALCNT    .byt 0	;= $6F8        ;# RECALIBRATES -1              ; Text screen hole
+
+#ifdef DIAGMODE
+SCOUNT      .byt 0	;= $2FE        ;SECTORS-ACCESSED COUNT          
+LCOUNT      .byt 0	;= $2FF        ;LATENCY COUNT                   
+#endif
 
 ; consts
 IBDERR	=$40
@@ -69,6 +103,10 @@ IBWPER	=$10	; write protect err
 ; IO
 PHASEOFF=$90f0
 PHASEON	=$90f1
+MOTOROFF=$90f8
+MOTORON	=$90f9
+DRV1EN  =$90fa
+DRV2EN  =$90fb
 Q6L	=$90fc
 Q6H	=$90fd
 Q7L	=$90fe
@@ -103,10 +141,6 @@ Q7H	=$90ff
 ;****************************
 ASC2        = *           ;TELL RELOCTR WHERE RWTS BEGINS
 ;*********************************
-MOTOROFF    = $C088
-MOTORON     = $C089
-DRV1EN      = $C08A
-DRV2EN      = $C08B
 ;******************************
 ;* STATE MACHINE CONTROLS
 ;* Q6   Q7   FUNCTION
@@ -116,25 +150,10 @@ DRV2EN      = $C08B
 ;* LO   HI   WRITE
 ;* HI   HI   WRITE LOAD
 ;******************************
-DRV1TRK     = $478                                        ; Text screen hole
-DRV2TRK     = $4F8                                        ; Text screen hole
-IOBPL       = $48                                         ;
-IOBPH       = $49                                         ;
-SLOT        = $5F8        ;HOLDS SLOT NUM USED            ;
-PTRSDEST    = $3C                                         ;
-DEVCTBL     = PTRSDEST                                    ; $3C is pointer to Device Characteristics Table. See DCT
-DRIVNO      = $35                                         ;      [0] Device Type -- never used --
-MONTIME     = $46                                         ;      [1] Phases Per Track
-SECT        = CSSTV+1                                     ; $2D  [2] Motor On Delay Low -- never used --
-TRACK       = CSSTV+2                                     ; $2E  [3] Motor On Delay High
-VOLUME      = CSSTV+3                                     ; $2F
-MAXSEEKS    = 4           ;MAX FOR SEEKCNT                ;
-SEEKCNT     = $4F8        ;# RESEEKS BEFORE RECALIBRATE   ; Text screen hole, recycled with DRV2TRK
-RETRYCNT    = $578                                        ; Text screen hole
-RECALCNT    = $6F8        ;# RECALIBRATES -1              ; Text screen hole
 ;            PAGE                                            ; === Page 117 ===
 ;    LST OFF
 ;    DO DIAGMODE
+#ifdef DIAGMODE
 ;*                                                            
 ;* DIAGMODE EQUATES...                                        
 ;*                                                            
@@ -163,11 +182,12 @@ TL10        = TL9+TD
 TC11        = $0F         ;O - POSTNIBBLIZING              
 TL11        = TL10+TD                                      
 ;*                                                            
-SCOUNT      = $2FE        ;SECTORS-ACCESSED COUNT          
-LCOUNT      = $2FF        ;LATENCY COUNT                   
+;SCOUNT      = $2FE        ;SECTORS-ACCESSED COUNT          
+;LCOUNT      = $2FF        ;LATENCY COUNT                   
 TL12        = TL11+TD     ;LATENCY POSITION                
 ;            PAGE
 ;    FIN
+#endif
 ;    LST ON
 ;**************************
 ;*                        *
@@ -265,10 +285,12 @@ TL12        = TL11+TD     ;LATENCY POSITION
 RWTS        STY IOBPL       ;UPON ENTRY, A&Y POINT AT THE
             STA IOBPH       ;I/O CONTROL BLOCK (IOB)
 ;        LST OFF
+#ifdef DIAGMODE
 ;        DO DIAGMODE
             LDY #TC1        ;SAY WE'RE ACTIVE
             STY TL1                                         
 ;        FIN
+#endif
 ;        LST ON
             LDY #2          ;SET RECALIBRATE                ; magic number RWTS_RECALIBRATE = $2
             STY RECALCNT    ; COUNT                         ; Text screen hole!
@@ -379,6 +401,7 @@ NOWAIT      = *
 ;* WAIT FOR MOTOR SPEED TO COME UP.
 ;*
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMODE
             LDY #TC2                                        
             STY TL2                                         
@@ -388,6 +411,7 @@ NOWAIT      = *
             LDY #SP         ;SHUT OFF THE                   ; === Page 121 ===
             STY TL12        ; LATENCY INDICATOR             
 ;    FIN
+#endif
 ;    LST ON
             LDY MONTIME+1   ;IF MOTORTIME IS POSITIVE,
             BPL MOTORUP     ; THEN SEEK WASTED ENUFF TIME FOR US
@@ -400,10 +424,12 @@ CONWAIT     DEY
             BNE MOTOF       ;COUNT UP TO $0000
 MOTORUP     = *
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMODE
             LDY #SP         ;SAY 'MOTOR RUNNING'            
             STY TL2                                         
 ;    FIN
+#endif
 ;    LST ON
 
 ;=== RWTSTWO - Read Write Track Sector - Part 2, Page 122, T0S7 - T0S8, $BDAB .. $BEAE ===
@@ -423,42 +449,52 @@ TRYTRK      = *
             PHP             ;AND SAVE THAT
             BCS TRYTRK2     ;MUST PRENIBBLE FOR WRITE.
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDY #TC7            ;SAY 'PRENIBBLIZING'
         STY TL7                                 
 ;    FIN
+#endif
 ;    LST ON
             JSR PRENIB16
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDY #SP             ;PRENIB FINISHED    
         STY TL7                                 
 ;    FIN
+#endif
 ;    LST ON
 TRYTRK2     LDY #$30        ;ONLY 48 RETRIES OF ANY KIND.
             STY RETRYCNT
 TRYADR      LDX SLOT        ;GET SLOT NUM INTO X-REG
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #TC4            ;SAY 'READING ADDRESS'          
         STA TL4                                             
         LDA #SP             ;SAY 'NO ADDRESS ERROR' (YET)   
         STA TL6                                             
 ;    FIN
+#endif
 ;    LST ON
             JSR RDADR16     ;READ NEXT ADDRESS FIELD        ; ^
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #SP             ;ADDRESS-READ DONE              
         STA TL4                                             
 ;    FIN
+#endif
 ;    LST ON
             BCC RDRIGHT     ;IF READ IT RIGHT, HURRAH!      ; v
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #TC6            ;ADDRESS-READ DONE              
         STA TL4                                             
 ;    FIN
+#endif
 ;    LST ON
 TRYADR2     DEC RETRYCNT    ;ANOTHER MISTAEK!!              ; *spelling* Oh, the **irony**
             BPL TRYADR      ; WELL, LET IT GO THIS TIME..   ; === page 123 ===
@@ -525,6 +561,7 @@ CORRECTVOL  = *
             LDA INTRLEAV,Y  ;COMPUTE PHYSICAL SECTOR        ; DOS Sector Interleave/Skew Mapping
             CMP SECT        ;DID WE GET THE SECTOR?         ; === Page 124 ===
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         BEQ GOTSECT         ;=>WE FOUND IT!                         
         LDA #TC5            ;SAY 'LATENCY'                          
@@ -535,39 +572,48 @@ CORRECTVOL  = *
 NOLAT   = *                                                       
         JMP TRYADR2         ;NOW..GET CORRECT SECTOR..              
 ;    ELSE
+#else
 ;    LST ON
             BNE TRYADR2     ;NO, KEEP TRYING.               ;↑
 ;    FIN
+#endif
 ;*
 ;* HOORAY! WE GOT THE RIGHT SECTOR!
 ;*
 GOTSECT     = *
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #SP             ;SAY 'NO LATENCY'                   
         STA TL5                                                 
         INC SCOUNT          ;BUMP 'SECTORS-ACCESSED' COUNT      
 ;    FIN
+#endif
 ;    LST ON
             PLP
             BCC WRIT        ;CARRY WAS SET FOR READ OPERATION. ;↓
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #TC9            ;SAY 'READING'                  
         STA TL9                                             
         LDA #SP             ;SAY 'NO READ ERROR' (YET)      
         STA TL10                                            
 ;    FIN
+#endif
 ;    LST ON
             JSR READ16      ;CLEARED FOR WRITE
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #SP             ;READ FINISHED                  
         STA TL9                                             
 ;    FIN
+#endif
 ;    LST ON
             PHP             ;SAVE STATUS OF READ OPERATION
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         BCC GOODREAD        ;NO ERROR                       
         LDA #TC10           ;SAY 'READ ERROR'               
@@ -576,24 +622,30 @@ GOTSECT     = *
 ;*                                                           
 GOODREAD = *                                              
 ;    ELSE
+#else
 ;    LST ON
             ;BCS TRYADR2     ;CARRY SET UPON RETURN IF BAD READ 
 ;    FIN
+#endif
             PLP             ;CAREFUL OF STACK
             LDX #0          ;SET TO POSTNIBLIZE
             STX T0          ; All 256 BYTES OF THE SECTOR
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #TC11           ;SAY 'POSTINIBBLIZING'          ;POST_IN_NIBBLIZING
         STA TL11                                            
-;    FIN                                                     ; === Page 125 ===
+;    FIN    
+#endif                                                 ; === Page 125 ===
 ;    LST ON
             JSR POSTNB16    ;DECODE INTO REAL WORLD DATA
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #SP             ;POSTNIB COMPLETED              
         STA TL11                                            
 ;    FIN
+#endif
 ;    LST ON
             LDX SLOT        ;RESTORE SLOTNUM INTO X         ; I never would have guessed ...
 ALLDONE     CLC
@@ -604,6 +656,7 @@ HNDLERR     SEC             ;INDICATE AN ERROR
             STA (IOBPL),Y
             LDA MOTOROFF,X  ; TURN IT OFF...
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
 ;* AVERAGE LATENCY = LCOUNT/SCOUNT                           
         LDA LCOUNT          ; GET TOTAL LATENCY             
@@ -625,22 +678,27 @@ PRTL2   STA TL12            ;STUFF LATENCY COUNT
         LDA #SP             ; SAY 'RWTS NOT ACTIVE'         
         STA TL1                                             
 ;    FIN
+#endif
 ;    LST ON
             RTS
 WRIT        = *
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
        LDA #TC8             ; SAY 'WRITING'                 
        STA TL8                                              
 ;    FIN
+#endif
 ;    LST ON
             JSR WRITE16     ;WRITE NYBBLES NOW              ; ^ WRITRTN, page 137
 
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
        LDA #SP              ;WRITE FINISHED                 
        STA TL8                                              
 ;    FIN
+#endif
 ;    LST ON
             BCC ALLDONE     ;IF NO ERRORS.
             LDA #IBWPER     ;DISK IS WRITE PROTECTED!!
@@ -653,10 +711,12 @@ WRIT        = *
 ;*
 MYSEEK      PHA             ; AND PRESERVE A-REGISTER       ; === Page 126 === Uhm, OK, Captain Obvious
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #TC3            ;SAY 'SEEKING'                  
         STA TL3                                             
 ;    FIN
+#endif
 ;    LST ON
             LDY #$01        ;IS THIS A TWO-PHASE DISC?      ; magic number DCT_OFFSET_TYPE = $1
             LDA (DEVCTBL),Y
@@ -667,10 +727,12 @@ MYSEEK      PHA             ; AND PRESERVE A-REGISTER       ; === Page 126 === U
             JSR MYSEEK2
             LDA CURTRK      ;DIVIDE BACK DOWN
 ;    LST OFF
+#ifdef DIAGMODE
 ;    DO DIAGMOD
         LDA #SP                                             
         STA TL3             ;SEEK DONE                      
 ;    FIN
+#endif
 ;    LST ON
             RTS
 MYSEEK2     STA TRKN        ;SAVE DESTINATION TRACK(*2)     ;
@@ -1404,8 +1466,10 @@ SEEKRTS     RTS             ;AND RETURN                     ; /sarcasm I don't k
 ;            REP 40
 DSKFORM     = *
 ;    DO DIAGMOD              ;ELIMINATE FMTR FROM DIAG ASSEMBLY
+#ifdef DIAGMODE
 ;        LST OFF                                             
 ;    ELSE
+#else
             LDY #3                                          ; magic number IOB_OFFSET_VOL = $3
             LDA (IOBPL),Y   ;VOLUME NUMBER IN IOB.
             STA NVOL        ;FOR FORMATTER.
@@ -1582,6 +1646,7 @@ FOUND       .byt 0,0,0,0     ;'SECTOR FOUND' TABLE            ;[.. wastes 16 byt
             .byt 0,0,0,0                                     ; ..
             .byt 0,0,0,0                                     ; ..]
 ;    FIN                                                     ; Macro started waaay back on Line #014, DSKFORM
+#endif
 
 ;***********************************************************************
 
