@@ -1747,7 +1747,32 @@ WRNIBL      STA Q6H,X       ;(5) WRITE NIBL.                 ;+5 [32] Should be 
 NBUF1	;=(*+255) & $ff00
 	.dsb 256
 NBUF2	; uses lowest 86 bytes
-	.dsb 256
+	.dsb 86
+
+	; fill up so that DNIBL is located at
+	; end of page in memory
+	; (wasted area)
+	.dsb $96-86
+
+;***************************
+;*      7-BIT TO 6-BIT     *
+;*     'DENIBLIZE' TABL    *
+;*    (16-SECTOR FORMAT)   *
+;*                         *
+;*       VALID CODES       *
+;*     $96 TO $FF ONLY.    *
+;*                         *
+;*                         *
+;*   CODES WITH MORE THAN  *
+;*   ONE PAIR OF ADJACENT  *
+;*    ZEROES OR WITH NO    *
+;*   ADJACENT ONES (EXCEPT *
+;*    BIT 7) ARE EXCLUDED. *
+;*                         *
+;* THIS TABLE *MUST* BE    *
+;* ALIGNED AT THE END OF   *
+;* A PAGE IN MEMORY!!!     *
+;***************************
 
 DNIBL	    =*-$96 		   ; uses bytes $96-$ff
             .byt $00,$01,$98                                 ; 96 97 --   *sigh* And the comment that this is the
