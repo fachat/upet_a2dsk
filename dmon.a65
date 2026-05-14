@@ -75,7 +75,14 @@ TERM	rts
 	plp
 	rts
 GETC	
-fgetc	jmp $ffcf
+	jsr $ffe4
+	beq nochar
+	clc
+	rts
+nochar	lda #E_EMPTY
+	sec
+	rts
+
 TC_CR	=13
 STDIN	=<-1
 STDCIN	=<-2
@@ -805,11 +812,9 @@ MO2       CLC
 
 	; see if we got something from the console
 	; TODO - need to check for SIG_BRK
-Serbrk	ldx #STDCIN
-	clc
-	jsr fgetc
-	; invert C
-	bcc nok
+Serbrk	lda $9b
+	cmp #$ef
+	beq nok
 	clc
 	.byt $24
 nok	sec
