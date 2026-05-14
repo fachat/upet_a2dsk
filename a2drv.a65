@@ -157,7 +157,7 @@ ASC2        = *           ;TELL RELOCTR WHERE RWTS BEGINS
 ;* DIAGMODE EQUATES...                                        
 ;*                                                            
 SP          = $A0         ;SPACE (INDICATOR OFF)           
-TD          = 2           ;DISPL BETWEEN CHARS             
+TD          = 3           ;DISPL BETWEEN CHARS             
 TC1         = $1E         ;^ - RWTS ACTIVE                 
 TL1         = $8000	;$07D0                                        ; VTAB 24: HTAB 1
 TC2         = $0D         ;M - MOTOR STARTUP               
@@ -545,6 +545,7 @@ CORRECTVOL  = *
         BEQ NOLAT           ;=>YES, LATENCY UNPREDICTABLE ANYWAY    
         INC LCOUNT          ;NO, COUNT SECTORS MISSED               
 NOLAT   = *                                                       
+inc $8020
         JMP TRYADR2         ;NOW..GET CORRECT SECTOR..              
 #else
             BNE TRYADR2     ;NO, KEEP TRYING.               ;↑
@@ -1659,6 +1660,8 @@ INTRLEAV    = *                                           ; *sigh*
 ;*  ON BRANCHES                 *
 ;*                              *
 ;********************************
+	.byt 0	; avoid page boundary on WSYNC1
+
 SWADR1      = *           ;TELL RELOCATOR WHERE TO BEGIN
 ;*******************************
 WADR16      SEC             ;ANTICIPATE WR PROT ERR.
@@ -1742,11 +1745,48 @@ WRNIBL      STA Q6H,X       ;(5) WRITE NIBL.                 ;+5 [32] Should be 
 ; NBUF2 (86 bytes) must not cross a page boundary
 	.align 256
 NBUF1	;=(*+255) & $ff00
-	.dsb NBUF1-*
+	.dsb 256
 NBUF2	; uses lowest 86 bytes
-DNIBL	; uses bytes $96-$ff
 	.dsb 256
 
+DNIBL	    =*-$96 		   ; uses bytes $96-$ff
+            .byt $00,$01,$98                                 ; 96 97 --   *sigh* And the comment that this is the
+            .byt $99,$02,$03                                 ; -- 9A 9B   64 disk nibbles of 6&2 Read Table
+            .byt $9C,$04,$05                                 ; -- 9D 9E   is where again? Comments people, comments!
+            .byt $06,$A0,$A1                                 ; 9F -- --   Hey, after annotating 154 pages
+            .byt $A2,$A3,$A4                                 ; -- -- --   you would be grumpy too. :-)
+            .byt $A5,$07,$08                                 ; -- A6 A7
+            .byt $A8,$A9,$AA                                 ; -- -- !!   (!! Technically AA is a valid disk nibble)
+            .byt $09,$0A,$0B                                 ; AB AC AD   but it reserved for a 3 byte header id
+            .byt $0C,$0D,$B0                                 ; AE AF --   Typical DOS 3.3 B-L-O-A-T
+            .byt $B1,$0E,$0F                                 ; -- B2 B3   One reserved byte D5 could be used for T/S  header. HEAD = 8EAD i.e. D5 8E, or D5 8E AD
+            .byt $10,$11,$12                                 ; B4 B5 B6   One reserved byte D5 could be used for Data header. DATA = DA1A i.e. D5 DA, or D5 DA 1A
+            .byt $13,$B8,$14                                 ; B7 -- B9   But since we have 66 valid disk nibbles reservering two for meta-data is OK.
+            .byt $15,$16,$17                                 ; BA BB BC   But we could pack more data on a track the more disk nibbles we use. i.e. 19 sectors/track.
+            .byt $18,$19,$1A                                 ; BD BE BF
+            .byt $C0,$C1,$C2                                 ; -- -- --   [.. *wastes* 11 bytes (unused)
+            .byt $C3,$C4,$C5                                 ; -- -- --    .. /sarcasm But who cares, we have 48K right!?
+            .byt $C6,$C7,$C8                                 ; -- -- --    .. This is why DOS takes seconds longer to boot.
+            .byt $C9,$CA,$1B                                 ; -- -- CB    ..]
+            .byt $CC,$1C,$1D                                 ; -- CD CE   *sigh* This entire table can be compactly
+            .byt $1E,$D0,$D1                                 ; CF -- --   represented with 8 lines instead of 36 lines
+            .byt $D2,$1F,$D4                                 ; -- D3 --   If only we had a HEX pseudo-mnemonic ...
+            .byt $D5,$20,$21                                 ; @@ D6 D7   (@@ Technically D5 is valid but is reserved too)
+            .byt $D8,$22,$23                                 ; -- D9 DA      x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 xA xB xC xD xE xF
+            .byt $24,$25,$26                                 ; DB DC DD   9x:-- -- -- -- -- -- 00 01 -- -- 02 03 -- 04 05 06
+            .byt $27,$28,$E0                                 ; DE DF --   Ax:-- -- -- -- -- -- 07 08 -- -- !! 09 0A 0B 0C 0D
+            .byt $E1,$E2,$E3                                 ; -- -- --   Bx:-- -- 0E 0F 10 11 12 13 -- 14 15 16 17 18 19 1A
+            .byt $E4,$29,$2A                                 ; -- E5 E6   Cx:-- -- -- -- -- -- -- -- -- -- -- 1B -- 1C 1D 1E
+            .byt $2B,$E8,$2C                                 ; E7 -- E9   Dx:-- -- -- 1F -- @@ 20 21 -- 22 23 24 25 26 27 28
+            .byt $2D,$2E,$2F                                 ; EA EB EC   Ex:-- -- -- -- -- 29 2A 2B -- 2C 2D 2E 2F 30 31 32
+            .byt $30,$31,$32                                 ; ED EE EF   Fx:-- -- 33 34 35 36 37 38 -- 39 3A 3B 3C 3D 3E 3F
+            .byt $F0,$F1,$33                                 ; -- -- F2   === Page 100 ===
+            .byt $34,$35,$36                                 ; F3 F4 F5
+            .byt $37,$38,$F8                                 ; F6 F7 --
+            .byt $39,$3A,$3B                                 ; F9 FA FB
+            .byt $3C,$3D,$3E                                 ; FC FD FE
+            .byt $3F                                         ; FF
+            ;PAGE
 ;***************************
 ;*      7-BIT TO 6-BIT     *
 ;*     'DENIBLIZE' TABL    *
