@@ -89,7 +89,7 @@ IOB	.byt 1		; 0 IBTYPE
 	.byt $10	; 1 IBSLOT - slot number (actual X index in I/O) for access
 	.byt 1		; 2 IBDRVN - drive number (1 or 2)
 	.byt 0		; 3 IBVOL - expected volume number (0=match all)
-	.byt 20		; 4 IBTRK	- track
+	.byt 0		; 4 IBTRK	- track
 	.byt 1		; 5 IBSECT - sector
 	.word IBDCT	; 6 IBDCTP - pointer to device characteristics table
 	.word databuf	; 8 IBBUFP - pointer to data buffer

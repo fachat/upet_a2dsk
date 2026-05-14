@@ -488,12 +488,12 @@ RESEEK      JSR MYSEEK      ;GO TO CORRECT TRACK THIS TIME!
 ;* MAKE SURE THIS IS THE TRACK, SECTOR, AND VOLUME DESIRED.
 ;*
 RDRIGHT pha
-	lda TRACK
+	lda TRACK	; this is real track
 	asl
 	tay
 	pla    
 	;LDY TRACK       ;ON THE RIGHT TRACK?
-            CPY CURTRK
+            CPY CURTRK	; this is half tracks!
             BEQ RTTRK       ;IF SO, GOOD                    ;↓
 ;* NO, DRIVE WAS ON A DIFFERENT TRACK. TRY
 ;* RESEEKING/RECALIBRATING FROM THIS TRACK
@@ -502,7 +502,8 @@ sty $8026
             LDA CURTRK      ;PRESERVE DESTINATION TRACK
 sta $8025
             PHA
-            TYA
+            ;TYA
+	lda TRACK
             JSR SETTRK
             PLA
             DEC SEEKCNT      ;SHOULD WE RESEEK?
