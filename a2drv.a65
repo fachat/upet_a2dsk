@@ -78,7 +78,6 @@ VOLUME      = CSSTV+3                                     ; $2F
 MAXSEEKS    = 4           ;MAX FOR SEEKCNT                ;
 
 ; vars
-SEKCNT	    .byt 0
 CURTRK	    .byt 0
 RECALCCNT   .byt 0
 
@@ -88,7 +87,7 @@ CRKTRK      = DRV1TRK        ;CURRENT TRACK ON ENTRY.        ; "Current Track" D
 SLOTABS	    .word 0
 SLOT	    .byt 0
 
-SEEKCNT     .byt 0	;= $4F8        ;# RESEEKS BEFORE RECALIBRATE   ; Text screen hole, recycled with DRV2TRK
+SEEKCNT     =DRV2TRK	;= $4F8        ;# RESEEKS BEFORE RECALIBRATE   ; Text screen hole, recycled with DRV2TRK
 RETRYCNT    .byt 0	;= $578                                        ; Text screen hole
 RECALCNT    .byt 0	;= $6F8        ;# RECALIBRATES -1              ; Text screen hole
 
@@ -330,6 +329,7 @@ CHKIFON     = *
             PLA
             PHA
             PLA
+	    ; AF: no idea why A is stored here, X actually works
             ;STA SLOT                                        ; Text Screen Hole
 	    STX SLOT
             CMP Q6L,X       ;CHECK RUNNING HERE
@@ -427,9 +427,9 @@ MOTORUP     = *
 TRYTRK      = *
             LDY #$0C                                        ; magic number IOB_OFFSET_CMD = $C
             LDA (IOBPL),Y   ;GET COMMAND CODE #
-            BEQ GALLDONE    ;IF NULL COMMAND, GO HOME TO BED.   ;↓
+            BEQ GALLDONE1    ;IF NULL COMMAND, GO HOME TO BED.   ;↓
             CMP #$04        ;FORMAT THE DISK?                   ; magic number RWTS_CMD_FORMAT = $4 *sigh*
-            BEQ FORMDSK     ;ALLRIGHT,ALLRIGHT, I WILL...       ; If only the IBCMD commands were an enum instead of a dumb bitmask, see RWTS_CMD_*
+            BEQ FORMDSK1     ;ALLRIGHT,ALLRIGHT, I WILL...       ; If only the IBCMD commands were an enum instead of a dumb bitmask, see RWTS_CMD_*
             ROR             ;SET CARRY=1 FOR READ, 0 FOR WRITE
             PHP             ;AND SAVE THAT
             BCS TRYTRK2     ;MUST PRENIBBLE FOR WRITE.
@@ -445,7 +445,6 @@ TRYTRK      = *
 TRYTRK2     LDY #$30        ;ONLY 48 RETRIES OF ANY KIND.
             STY RETRYCNT
 TRYADR      LDX SLOT        ;GET SLOT NUM INTO X-REG
-stx $8027
 #ifdef DIAGMODE
         LDA #TC4            ;SAY 'READING ADDRESS'          
         STA TL4                                             
@@ -474,6 +473,10 @@ RECAL       = *
             JSR SETTRK      ;PRETEND TO BE ON TRACK 96      ; the case -- that will make it work and won't cause
             DEC RECALCCNT   ;ONCE TOO MANY??                ; any head alignment problems over time ... NOT!
             BEQ DRVERR      ;TRIED TO RECALIBRATE TOO MANY TIMES, ERROR! ; v
+
+GALLDONE1  beq GALLDONE
+FORMDSK1   beq FORMDSK
+
             LDA #MAXSEEKS   ;RESET THE
             STA SEEKCNT     ; SEEK COUNTER
             LDA #$00
@@ -485,17 +488,25 @@ RESEEK      JSR MYSEEK      ;GO TO CORRECT TRACK THIS TIME!
 ;* HAVE NOW READ
 ;* MAKE SURE THIS IS THE TRACK, SECTOR, AND VOLUME DESIRED.
 ;*
-RDRIGHT     LDY TRACK       ;ON THE RIGHT TRACK?
+RDRIGHT pha
+	lda TRACK
+	asl
+	tay
+	pla    
+	;LDY TRACK       ;ON THE RIGHT TRACK?
             CPY CURTRK
             BEQ RTTRK       ;IF SO, GOOD                    ;↓
 ;* NO, DRIVE WAS ON A DIFFERENT TRACK. TRY
 ;* RESEEKING/RECALIBRATING FROM THIS TRACK
+;inc $8027
+sty $8026
             LDA CURTRK      ;PRESERVE DESTINATION TRACK
+sta $8025
             PHA
             TYA
             JSR SETTRK
             PLA
-            DEC SEKCNT      ;SHOULD WE RESEEK?
+            DEC SEEKCNT      ;SHOULD WE RESEEK?
             BNE RESEEK      ;=>YES, RESEEK                  ;↑ === T0S8 ===
             BEQ RECAL       ;=>NO, RECALIBRATE!             ;↑
 ;****
@@ -653,12 +664,16 @@ MYSEEK      PHA             ; AND PRESERVE A-REGISTER       ; === Page 126 === U
             RTS
 MYSEEK2     STA TRKN        ;SAVE DESTINATION TRACK(*2)     ;
             JSR XTOY        ;SET Y=SLOT#
+sty $8024
             LDA DRV1TRK,Y
+sta $8023
             BIT DRIVNO
             BMI WASD0       ;IS MINUS, ON DRIVE ZERO
             LDA DRV2TRK,Y
 WASD0       STA CURTRK      ;THIS IS WHERE I AM             ; Going to resist cheap shot here
+sta $8022
             LDA TRKN        ;AND WHERE I'M GOING TO         ; But I will point out crappy var names and better ones:
+sta $8021
             BIT DRIVNO      ;NOW UPDATE SLOT DEPENDENT      ;   SRC_TRK
             BMI ISDRV1      ;LOCATIONS WITH TRACK           ;   DST_TRK
             STA DRV2TRK,Y   ;INFORMATION
@@ -1756,6 +1771,12 @@ DNIBL	; uses bytes $96-$ff
 ;DNIBL       EQU 256*XP      ;DNIBL  TABLE PAGE              ; See READ4
 
 
-DINIT	rts
+DINIT	ldy #7
+	lda #0
+l	sta DRV1TRK,y
+	sta DRV2TRK,y
+	dey
+	bpl l
+	rts
 
 

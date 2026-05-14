@@ -90,7 +90,7 @@ IOB	.byt 1		; 0 IBTYPE
 	.byt 1		; 2 IBDRVN - drive number (1 or 2)
 	.byt 0		; 3 IBVOL - expected volume number (0=match all)
 	.byt 0		; 4 IBTRK	- track
-	.byt 1		; 5 IBSECT - sector
+	.byt 0		; 5 IBSECT - sector
 	.word IBDCT	; 6 IBDCTP - pointer to device characteristics table
 	.word databuf	; 8 IBBUFP - pointer to data buffer
 	.word 512	; 10 IBDLEN - length of data to process (in bytes)
@@ -101,8 +101,8 @@ IOB	.byt 1		; 0 IBTYPE
 	.byt 0		; 16 IOBPDN - output: previous drive number
 
 IBDCT	.byt 0		; device type code (0 for Disk II)
-	.byt 2		; phases per track during seek (2 for Disk II)
-	.word 1		; Motor on delay in 100us
+	.byt 1		; phases per track during seek (2 for Disk II)
+	.word $d8ef	; Motor on delay in 100us
 
 	.)
 
