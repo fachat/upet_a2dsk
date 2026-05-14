@@ -85,19 +85,20 @@ hexout	pha
 nibout	ora #$30
 	jmp $ffd2
 
-IOB	.byt 1		; IBTYPE
-	.byt $0		; IBSLOT - slot number (actual X index in I/O) for access
-	.byt 1		; IBDRVN - drive number (1 or 2)
-	.byt 0		; IBVOL - expected volume number (0=match all)
-	.byt 0		; IBTRK	- track
-	.byt 1		; IBSECT - sector
-	.word IBDCT	; IBDCTP - pointer to device characteristics table
-	.word databuf	; IBBUFP - pointer to data buffer
-	.word 512	; IBDLEN - length of data to process (in bytes)
-	.byt 1		; IBCMD - command (0=/, 1= read sect, 2= write sect, 4= fmt dsk)
-	.byt 0		; IBSMD - output: volume number actually found / or error
-	.byt 0		; IOBPSN - output: previous slot number
-	.byt 0		; IOBPDN - output: previous drive number
+IOB	.byt 1		; 0 IBTYPE
+	.byt $0		; 1 IBSLOT - slot number (actual X index in I/O) for access
+	.byt 1		; 2 IBDRVN - drive number (1 or 2)
+	.byt 0		; 3 IBVOL - expected volume number (0=match all)
+	.byt 0		; 4 IBTRK	- track
+	.byt 1		; 5 IBSECT - sector
+	.word IBDCT	; 6 IBDCTP - pointer to device characteristics table
+	.word databuf	; 8 IBBUFP - pointer to data buffer
+	.word 512	; 10 IBDLEN - length of data to process (in bytes)
+	.byt 1		; 12 IBCMD - command (0=/, 1= read sect, 2= write sect, 4= fmt dsk)
+	.byt 0		; 13 return code (error on C=1)
+	.byt 0		; 14 IBSMD - output: volume number actually found / or error
+	.byt 0		; 15 IOBPSN - output: previous slot number
+	.byt 0		; 16 IOBPDN - output: previous drive number
 
 IBDCT	.byt 0		; device type code (0 for Disk II)
 	.byt 2		; phases per track during seek (2 for Disk II)

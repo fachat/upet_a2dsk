@@ -330,7 +330,8 @@ CHKIFON     = *
             PLA
             PHA
             PLA
-            STA SLOT                                        ; Text Screen Hole
+            ;STA SLOT                                        ; Text Screen Hole
+	    STX SLOT
             CMP Q6L,X       ;CHECK RUNNING HERE
             BNE ITISON      ;=>IT'S ON...
             DEY             ;MAYBE WE DIDN'T CATCH IT
@@ -444,11 +445,12 @@ TRYTRK      = *
 TRYTRK2     LDY #$30        ;ONLY 48 RETRIES OF ANY KIND.
             STY RETRYCNT
 TRYADR      LDX SLOT        ;GET SLOT NUM INTO X-REG
+stx $8027
 #ifdef DIAGMODE
         LDA #TC4            ;SAY 'READING ADDRESS'          
         STA TL4                                             
         LDA #SP             ;SAY 'NO ADDRESS ERROR' (YET)   
-        STA TL6                                             
+        STA TL6  
 #endif
             JSR RDADR16     ;READ NEXT ADDRESS FIELD        ; ^
 #ifdef DIAGMODE

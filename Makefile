@@ -9,7 +9,7 @@ $(ASM): % : %.a65 a2*.a65 #*.i65
 	xa -XCA65 -P$@.lst -l $@.lab -o $@ $<
 
 %.o65: %.a65 *.a65
-	xa -XCA65 -c -R -E -P$@.lst -l $@.lab -o $@ $<
+	xa -XCA65 -c -R -E -bt 1023 -P$@.lst -l $@.lab -o $@ $<
 
 wdmon.o65: dmon.o65 wddrv.o65
 	ldo65 -o $@ $^
