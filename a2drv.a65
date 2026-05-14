@@ -59,7 +59,6 @@ TRKCNT      = COUNT	;$26         ;HALFTRKS MOVED COUNT.
 PRIOR       = CSUM	;$27         ;PRIOR HALFTRACK.
 TRKN        = $59	;$2A         ;DESIRED TRACK.
 SLOTTEMP    = $5a	;$2B         ;SLOT NUM TIMES $10.
-;CRKTRK      = $478        ;CURRENT TRACK ON ENTRY.         ; "Current Track" Drive 1, Why is this defined AGAIN? DRV1TRK
 
 BUF	    = PTRSDEST+2	;$3e	     ; Pointer to buffer (2 bytes)
 
@@ -83,7 +82,7 @@ RECALCCNT   .byt 0
 
 DRV1TRK     .dsb 8	; slot I/O index divided by 16
 DRV2TRK     .dsb 8
-CRKTRK      = DRV1TRK        ;CURRENT TRACK ON ENTRY.        ; "Current Track" Drive 1, Why is this defined AGAIN? DRV1TRK
+
 SLOTABS	    .word 0
 SLOT	    .byt 0
 
@@ -102,16 +101,16 @@ IBVMME	=$20
 IBWPER	=$10	; write protect err
 
 ; IO
-PHASEOFF=$90f0
-PHASEON	=$90f1
-MOTOROFF=$90f8
-MOTORON	=$90f9
-DRV1EN  =$90fa
-DRV2EN  =$90fb
-Q6L	=$90fc
-Q6H	=$90fd
-Q7L	=$90fe
-Q7H	=$90ff
+PHASEOFF=$90f0-$10
+PHASEON	=$90f1-$10
+MOTOROFF=$90f8-$10
+MOTORON	=$90f9-$10
+DRV1EN  =$90fa-$10
+DRV2EN  =$90fb-$10
+Q6L	=$90fc-$10
+Q6H	=$90fd-$10
+Q7L	=$90fe-$10
+Q7H	=$90ff-$10
 
 
 ;==================================================================================
