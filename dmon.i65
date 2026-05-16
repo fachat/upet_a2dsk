@@ -24,6 +24,3 @@
 #define E_WR    <-100    
 #define E_FT    <-101    
 
-#define	E_ILLPAR <-1
-#define	E_EMPTY <-2
-

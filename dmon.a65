@@ -36,20 +36,6 @@
 #define   MB   1
 
           .(
-;#include  "kdefs.i65"
-;#include  "kernel.i65"
-;#include  "lib6502.i65"
-
-	.word $0401
-	*=$0401
-	.word link
-	.word 10
-	.byt $9e, "1040",0
-link	.word 0
-	.dsb 1040-*
-	jmp PRG
-
-/*************************************************************************/
 
 #include "dmon.i65"
 
@@ -60,34 +46,6 @@ link	.word 0
 #define   MAXLEN    64
 #define   BUFLEN    8192
 
-/*************************************************************************/
-
-/* map oldlib code to apps/common.a65 */
-#define	Txtout	strout
-#define	Putc	chrout
-#define	Crlfout	crlfout
-
-chrout	jmp $ffd2
-TERM	rts
-&YIELD	php
-	cli
-	nop
-	plp
-	rts
-GETC	
-	jsr $ffe4
-	beq nochar
-	clc
-	rts
-nochar	lda #E_EMPTY
-	sec
-	rts
-
-TC_CR	=13
-STDIN	=<-1
-STDCIN	=<-2
-E_EOF	=<-1
-
 	.bss
 buffer    .dsb 256
 
@@ -95,7 +53,7 @@ IOBUF     .dsb MAXLEN
 LZEI      .byt 0
 	.text
 
-PRG       jsr DINIT
+&PRG      jsr DINIT
           lda #<M0TXT
           ldy #>M0TXT
           jsr Txtout
@@ -106,7 +64,7 @@ MXL
 linex     jsr CHRGOT:beq MXL:bne mx1
 MO0       jsr CHRGET:beq MXL
 mx1       CMP #MESSAGE:BEQ MO0
-          jsr TOUPPER
+          ;jsr TOUPPER
           LDX #0:MO3 CMP MONBEF,X:BEQ MO4
           INX:CPX #ANZBEF:BCC MO3
           JSR ERR
@@ -129,25 +87,25 @@ MOEX      TXA:ASL:TAX:LDA MONADR+1,X
           PHA:LDA MONADR,X:PHA:RTS
 
 ANZBEF    =14
-MONBEF    .asc "XRWMI",MEBYT,"LSOTFCBN"
+MONBEF    .asc "xrwmi",MEBYT,"lsotfcbn"
 MONADR    .word MOX-1,mread-1,mwrite-1,MOM-1,BI-1,MOI-1
           .word lread-1,lwrite-1
           .word MOO-1,MOT-1,MOF-1,MOC-1,BB-1,MON-1
 
-M0TXT     .ASC 13,10,"C*"
-          .ASC 13,10,"DMON V"
+M0TXT     .ASC 13,10,"c*"
+          .ASC 13,10,"dmon v"
           .BYT MA+"0",".",MB+"0"
-          .asc " (c) A.Fachat",0
+          .asc " (c) a.fachat",0
 M3TXT     .BYT " ","?",0
-MTTXT     .asc 13,10,"Bye!",13,10,0
+MTTXT     .asc 13,10,"bye!",13,10,0
 
 &m0rtxt    .asc 13,"reading",0
 &m0wtxt    .asc 13,"writing",0
-&m1txt     .asc " Block: Drive ",0
-&m2txt     .asc ", Side ",0
-&m3txt     .asc ", Track ",0
-&m4txt     .asc ", Sector ",0
-fmtxt     .asc 13,10,"Are you sure (J/N)?",0
+&m1txt     .asc " block: drive ",0
+&m2txt     .asc ", side ",0
+&m3txt     .asc ", track ",0
+&m4txt     .asc ", sector ",0
+fmtxt     .asc 13,10,"are you sure (j/n)?",0
 
 /**************************************************************************/
 
@@ -167,8 +125,12 @@ rwp3      .dsb RW_SLEN
           jsr GETADR
           bcs rwerr
           sta rwpar+RW_DRV
+#ifdef NO_SIDES
+	lda #0
+#else
           jsr GETADR
           bcs rwerr
+#endif
           sta rwpar+RW_SIDE
           jsr GETADR
           bcs rwerr
@@ -315,7 +277,7 @@ Z3        .word 0
 
 MOM       .(
           JSR GET12:BCS MOME:;jsr setout
-/*
+#ifdef BUFFER_OFFSET
           lda #<buffer
           clc
           adc Z1
@@ -331,7 +293,7 @@ MOM       .(
           lda #>buffer
           adc Z2+1
           sta Z2+1
-*/          
+#endif 
 30150 MOM1 JSR MOMZO
           jsr Serbrk:bcs MOME
 30160 LDA ABPZ:JSR ADCMP:BCC MOM1
@@ -362,19 +324,23 @@ MOBZO     JSR Crlfout:LDA #MEBYT:JSR MASOUT
 
 BI        .(
           JSR GETADR:bcs MOIE
-          sta Z1:stx Z1+1
-/*          clc:adc #<buffer: sta Z1
+#ifdef BUFFER_OFFSET
+          clc:adc #<buffer: sta Z1
           txa:adc #>buffer:sta Z1+1
-*/
+#else
+          sta Z1:stx Z1+1
+#endif
           jsr CHRGOT:bne MOI0
           lda #MEBYT
           ldy #0
           jmp MOINL
 
 &MOI      JSR GETADR:bcs MOIE
+#ifdef BUFFER_OFFSET
+          clc: adc #<buffer:sta Z1:txa:adc #>buffer:sta Z1+1
+#else
           sta Z1:stx Z1+1
-/*          clc: adc #<buffer:sta Z1:txa:adc #>buffer:sta Z1+1
-*/
+#endif
           jsr CHRGOT
           beq MOIE
 MOI0      LDA #0:STA Z2
@@ -542,15 +508,17 @@ MASOUT    PHA
           PLA
           JSR Putc
           LDA Z1
-/*          sec
+#ifdef BUFFER_OFFSET
+          sec
           sbc #<buffer
           pha          
           LDa Z1+1
           sbc #>buffer
           tax
           pla
-*/
+#else
           ldx Z1+1
+#endif
           JSR SADRO
           JMP SSPOUT
 
@@ -736,7 +704,7 @@ GAE       SEC
           .)
           
 &tsthex   .(
-          cmp #"A"-1
+          cmp #"a"-1
           bcs th1
           sbc #"0"-1
           cmp #10
@@ -777,7 +745,9 @@ mo1a      cmp #$1f
           CMP #8:BNE MO1
           cpy #0:beq MO1
           dey
+#ifndef NO_ECHO
           jsr Putc
+#endif
 /*#ifdef SHOW         
           ldx #STDERR
           jsr OUT
@@ -785,7 +755,9 @@ mo1a      cmp #$1f
           jmp MO1
 
 MO1A      STA IOBUF,Y
+#ifndef NO_ECHO
           jsr Putc
+#endif
 /*#ifdef SHOW
      ldx #STDERR
      jsr OUT
@@ -820,8 +792,6 @@ Serbrk	lda $9b
 nok	sec
 	rts
 
-
-#include "common.a65"
 
 ende      .)
           

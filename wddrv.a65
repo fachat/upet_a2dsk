@@ -1146,9 +1146,5 @@ fr        cli
 Dezbout	lda #0
 	jmp wordout
 
-Txtout	=strout
-chrout	=$ffd2
-#include "common.a65"
-
 	.)
           
