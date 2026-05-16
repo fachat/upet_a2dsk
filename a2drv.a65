@@ -9,6 +9,8 @@
 
 #define	DIAGMODE
 
+	.align 256
+
 T0	=$1f	;=$26
 
 COUNT	=$20	;$26
@@ -57,7 +59,7 @@ IDX         = COUNT	;$26         ;INDEX INTO (BUF).
 ; ---- SEEK
 TRKCNT      = COUNT	;$26         ;HALFTRKS MOVED COUNT.
 PRIOR       = CSUM	;$27         ;PRIOR HALFTRACK.
-TRKN        = $59	;$2A         ;DESIRED TRACK.
+DST_HTRK        = $59	;$2A         ;DESIRED TRACK.
 SLOTTEMP    = $5a	;$2B         ;SLOT NUM TIMES $10.
 
 BUF	    = PTRSDEST+2	;$3e	     ; Pointer to buffer (2 bytes)
@@ -77,16 +79,15 @@ VOLUME      = CSSTV+3                                     ; $2F
 MAXSEEKS    = 4           ;MAX FOR SEEKCNT                ;
 
 ; vars
-CURTRK	    .byt 0
-RECALCCNT   .byt 0
+CUR_HTRK	    .byt 0
 
-DRV1TRK     .dsb 8	; slot I/O index divided by 16
-DRV2TRK     .dsb 8
+DRV1HTRK     .dsb 8	; slot I/O index divided by 16
+DRV2HTRK     .dsb 8
 
 SLOTABS	    .word 0
 SLOT	    .byt 0
 
-SEEKCNT     =DRV2TRK	;= $4F8        ;# RESEEKS BEFORE RECALIBRATE   ; Text screen hole, recycled with DRV2TRK
+SEEKCNT     =DRV2HTRK	;= $4F8        ;# RESEEKS BEFORE RECALIBRATE   ; Text screen hole, recycled with DRV2HTRK
 RETRYCNT    .byt 0	;= $578                                        ; Text screen hole
 RECALCNT    .byt 0	;= $6F8        ;# RECALIBRATES -1              ; Text screen hole
 
@@ -264,7 +265,7 @@ TL12        = TL11+TD     ;LATENCY POSITION
 ;* DEVICE TYPE CODE       *                                  ; B7FB: [0] Device Type -- never used --
 ;*  (ZERO FOR DISK II)    *
 ;*                        *
-;* NUMBER OF PHASES PER   *                                  ; B7FC: [1] Device Phases Per Track, See MYSEEK
+;* NUMBER OF PHASES PER   *                                  ; B7FC: [1] Device Phases Per Track, See MYSEEK_TRK
 ;* TRACK (TWO FOR DISK II)*
 ;*                        *
 ;* MOTOR ON TIME IN 100   *                                  ; B7FD: [2] Motor On Delay Low -- never used --
@@ -383,7 +384,7 @@ NOWAIT      = *
 ;*
             LDY #4          ;SET TO IOBTRK                  ; magic number IOB_OFFSET_TRK
             LDA (IOBPL),Y   ;GET DESIRED TRACK
-            JSR MYSEEK      ;SEEK!
+            JSR MYSEEK_TRK      ;SEEK!
 ;*
 ;* SEE IF MOTOR WAS ALREADY SPINNING.
 ;*
@@ -433,32 +434,32 @@ TRYTRK      = *
             PHP             ;AND SAVE THAT
             BCS TRYTRK2     ;MUST PRENIBBLE FOR WRITE.
 #ifdef DIAGMODE
-        LDY #TC7            ;SAY 'PRENIBBLIZING'
-        STY TL7                                 
+            LDY #TC7            ;SAY 'PRENIBBLIZING'
+            STY TL7                                 
 #endif
             JSR PRENIB16
 #ifdef DIAGMODE
-        LDY #SP             ;PRENIB FINISHED    
-        STY TL7                                 
+            LDY #SP             ;PRENIB FINISHED    
+            STY TL7                                 
 #endif
 TRYTRK2     LDY #$30        ;ONLY 48 RETRIES OF ANY KIND.
             STY RETRYCNT
 TRYADR      LDX SLOT        ;GET SLOT NUM INTO X-REG
 #ifdef DIAGMODE
-        LDA #TC4            ;SAY 'READING ADDRESS'          
-        STA TL4                                             
-        LDA #SP             ;SAY 'NO ADDRESS ERROR' (YET)   
-        STA TL6  
+            LDA #TC4            ;SAY 'READING ADDRESS'          
+            STA TL4                                             
+            LDA #SP             ;SAY 'NO ADDRESS ERROR' (YET)   
+            STA TL6  
 #endif
             JSR RDADR16     ;READ NEXT ADDRESS FIELD        ; ^
 #ifdef DIAGMODE
-        LDA #SP             ;ADDRESS-READ DONE              
-        STA TL4                                             
+            LDA #SP             ;ADDRESS-READ DONE              
+            STA TL4                                             
 #endif
             BCC RDRIGHT     ;IF READ IT RIGHT, HURRAH!      ; v
 #ifdef DIAGMODE
-        LDA #TC6            ;ADDRESS-READ DONE              
-        STA TL4                                             
+            LDA #TC6            ;ADDRESS-READ DONE              
+            STA TL4                                             
 #endif
 TRYADR2     DEC RETRYCNT    ;ANOTHER MISTAEK!!              ; *spelling* Oh, the **irony**
             BPL TRYADR      ; WELL, LET IT GO THIS TIME..   ; === page 123 ===
@@ -466,11 +467,9 @@ TRYADR2     DEC RETRYCNT    ;ANOTHER MISTAEK!!              ; *spelling* Oh, the
 ;* RRRRRECALIBRATE !!!!
 ;*
 RECAL       = *
-            LDA CURTRK
-            PHA             ;SAVE TRACK WE REALLY WANT      ; /sarcasm Nice to read VNOTRK * 2 phases/track
             LDA #$60        ;RECALIBRATE ALL OVER AGAIN!    ; /sarcasm Yeah ... let's bang the user's drive head against
             JSR SETTRK      ;PRETEND TO BE ON TRACK 96      ; the case -- that will make it work and won't cause
-            DEC RECALCCNT   ;ONCE TOO MANY??                ; any head alignment problems over time ... NOT!
+            DEC RECALCNT   ;ONCE TOO MANY??                ; any head alignment problems over time ... NOT!
             BEQ DRVERR      ;TRIED TO RECALIBRATE TOO MANY TIMES, ERROR! ; v
 
 GALLDONE1  beq GALLDONE
@@ -479,42 +478,37 @@ FORMDSK1   beq FORMDSK
             LDA #MAXSEEKS   ;RESET THE
             STA SEEKCNT     ; SEEK COUNTER
             LDA #$00
-            JSR MYSEEK      ;MOVE TO TRACK 00               ; v
-            PLA
-RESEEK      JSR MYSEEK      ;GO TO CORRECT TRACK THIS TIME!
+            JSR MYSEEK_TRK      ;MOVE TO TRACK 00               ; v
+RESEEK	
+	    ldy #4
+	    lda (IOBPL),y
+
+            JSR MYSEEK_TRK      ;GO TO CORRECT TRACK THIS TIME!
             JMP TRYTRK2     ;LOOP BACK, TRY AGAIN ON THIS TRACK
 ;*
 ;* HAVE NOW READ
 ;* MAKE SURE THIS IS THE TRACK, SECTOR, AND VOLUME DESIRED.
 ;*
-RDRIGHT pha
-	lda TRACK	; this is real track
-	asl
-	tay
-	pla    
-	;LDY TRACK       ;ON THE RIGHT TRACK?
-            CPY CURTRK	; this is half tracks!
+RDRIGHT     lda TRACK	; this is a real track that we read from disk
+	    asl
+	    tay
+            CPY CUR_HTRK	; this is half tracks!
             BEQ RTTRK       ;IF SO, GOOD                    ;↓
 ;* NO, DRIVE WAS ON A DIFFERENT TRACK. TRY
 ;* RESEEKING/RECALIBRATING FROM THIS TRACK
-;inc $8027
-sty $8026
-            LDA CURTRK      ;PRESERVE DESTINATION TRACK
-sta $8025
-            PHA
-            ;TYA
-	lda TRACK
+	    lda TRACK
             JSR SETTRK
-            PLA
+
             DEC SEEKCNT      ;SHOULD WE RESEEK?
             BNE RESEEK      ;=>YES, RESEEK                  ;↑ === T0S8 ===
             BEQ RECAL       ;=>NO, RECALIBRATE!             ;↑
 ;****
-DRVERR      PLA             ;REMOVE CURTRK
+DRVERR      ;PLA             ;REMOVE CUR_HTRK
             LDA #IBDERR     ;BAD DRIVE ERROR
 JMPTO1      PLP
             JMP HNDLERR
-GALLDONE    BEQ ALLDONE                                     ;↓
+
+
 FORMDSK     JMP DSKFORM     ;=>GO TO IT!                    ;↓ WhyTF is FormatDisk in the middle here???
 ;*
 ;* DRIVE IS ON RIGHT TRACK, CHECK VOLUME MISMATCH
@@ -538,15 +532,17 @@ CORRECTVOL  = *
             LDA INTRLEAV,Y  ;COMPUTE PHYSICAL SECTOR        ; DOS Sector Interleave/Skew Mapping
             CMP SECT        ;DID WE GET THE SECTOR?         ; === Page 124 ===
 #ifdef DIAGMODE
-        BEQ GOTSECT         ;=>WE FOUND IT!                         
-        LDA #TC5            ;SAY 'LATENCY'                          
-        STA TL5                                                     
-        LDA SCOUNT          ;ARE WE WAITING FOR FIRST SECTOR?       
-        BEQ NOLAT           ;=>YES, LATENCY UNPREDICTABLE ANYWAY    
-        INC LCOUNT          ;NO, COUNT SECTORS MISSED               
-NOLAT   = *                                                       
-inc $8020
-        JMP TRYADR2         ;NOW..GET CORRECT SECTOR..              
+            BEQ GOTSECT         ;=>WE FOUND IT!                         
+GALLDONE    BEQ ALLDONE                                     ;↓
+	lda SECT
+	sta $8025
+            LDA #TC5            ;SAY 'LATENCY'                          
+            STA TL5                                                     
+            LDA SCOUNT          ;ARE WE WAITING FOR FIRST SECTOR?       
+            BEQ NOLAT           ;=>YES, LATENCY UNPREDICTABLE ANYWAY    
+            INC LCOUNT          ;NO, COUNT SECTORS MISSED               
+NOLAT       = *                                                       
+            JMP TRYADR2         ;NOW..GET CORRECT SECTOR..              
 #else
             BNE TRYADR2     ;NO, KEEP TRYING.               ;↑
 #endif
@@ -555,86 +551,95 @@ inc $8020
 ;*
 GOTSECT     = *
 #ifdef DIAGMODE
-        LDA #SP             ;SAY 'NO LATENCY'                   
-        STA TL5                                                 
-        INC SCOUNT          ;BUMP 'SECTORS-ACCESSED' COUNT      
+            LDA #SP             ;SAY 'NO LATENCY'                   
+            STA TL5                                                 
+            INC SCOUNT          ;BUMP 'SECTORS-ACCESSED' COUNT      
 #endif
             PLP
-            BCC WRIT        ;CARRY WAS SET FOR READ OPERATION. ;↓
+            BCC WRIT        	;CARRY WAS SET FOR READ OPERATION. ;↓
 #ifdef DIAGMODE
-        LDA #TC9            ;SAY 'READING'                  
-        STA TL9                                             
-        LDA #SP             ;SAY 'NO READ ERROR' (YET)      
-        STA TL10                                            
+            LDA #TC9            ;SAY 'READING'                  
+            STA TL9                                             
+            LDA #SP             ;SAY 'NO READ ERROR' (YET)      
+            STA TL10                                            
 #endif
-            JSR READ16      ;CLEARED FOR WRITE
+            JSR READ16      	;CLEARED FOR WRITE
 #ifdef DIAGMODE
-        LDA #SP             ;READ FINISHED                  
-        STA TL9                                             
+            LDA #SP             ;READ FINISHED                  
+            STA TL9                                             
+	lda TRACK
+	sta $8024
+	lda SECT
+	sta $8025
 #endif
-            PHP             ;SAVE STATUS OF READ OPERATION
+            PHP             	;SAVE STATUS OF READ OPERATION
 #ifdef DIAGMODE
-        BCC GOODREAD        ;NO ERROR                       
-        LDA #TC10           ;SAY 'READ ERROR'               
-        STA TL10                                            
-        JMP TRYADR2         ;RETRY ON ERROR                 
+            BCC GOODREAD        ;NO ERROR                       
+            LDA #TC10           ;SAY 'READ ERROR'               
+            STA TL10                                            
+            JMP TRYADR2         ;RETRY ON ERROR                 
 ;*                                                           
 GOODREAD = *                                              
 #else
-            ;BCS TRYADR2     ;CARRY SET UPON RETURN IF BAD READ 
+            BCS TRYADR2     	;CARRY SET UPON RETURN IF BAD READ 
 #endif
-            PLP             ;CAREFUL OF STACK
-            LDX #0          ;SET TO POSTNIBLIZE
-            STX T0          ; All 256 BYTES OF THE SECTOR
+            PLP             	;CAREFUL OF STACK
+            LDX #0          	;SET TO POSTNIBLIZE
+            STX T0          	; All 256 BYTES OF THE SECTOR
 #ifdef DIAGMODE
-        LDA #TC11           ;SAY 'POSTINIBBLIZING'          ;POST_IN_NIBBLIZING
-        STA TL11                                            
+            LDA #TC11           ;SAY 'POSTINIBBLIZING'          ;POST_IN_NIBBLIZING
+            STA TL11                                            
 #endif                                                 ; === Page 125 ===
-            JSR POSTNB16    ;DECODE INTO REAL WORLD DATA
+            JSR POSTNB16    	;DECODE INTO REAL WORLD DATA
 #ifdef DIAGMODE
-        LDA #SP             ;POSTNIB COMPLETED              
-        STA TL11                                            
+            LDA #SP             ;POSTNIB COMPLETED              
+            STA TL11                                            
 #endif
-            LDX SLOT        ;RESTORE SLOTNUM INTO X         ; I never would have guessed ...
+            LDX SLOT        	;RESTORE SLOTNUM INTO X         ; I never would have guessed ...
 ALLDONE     CLC
-            ;DFB $24         ;SKIP OVER NEXT BYTE WITH BIT OPCODE        ; BIT $zp
-	    .byt $24
-HNDLERR     SEC             ;INDICATE AN ERROR
-            LDY #$0D        ;GIVE HIM ERROR#                ; magic number IOB_OFFSET_ERROR = $D
+	    .byt $24		; skip over next byte
+HNDLERR     SEC             	;INDICATE AN ERROR
+            LDY #$0D        	;GIVE HIM ERROR#                ; magic number IOB_OFFSET_ERROR = $D
             STA (IOBPL),Y
-            LDA MOTOROFF,X  ; TURN IT OFF...
+            LDA MOTOROFF,X  	; TURN IT OFF...
 #ifdef DIAGMODE
 ;* AVERAGE LATENCY = LCOUNT/SCOUNT                           
-        LDA LCOUNT          ; GET TOTAL LATENCY             
-        LDY #0              ; CLEAR QUOTIENT                
+	    PHP			; save C
+            LDA LCOUNT          ; GET TOTAL LATENCY             
+            LDY #0              ; CLEAR QUOTIENT                
 DIVIDE  = *                                               
-        CMP SCOUNT          ; DONE?                         
-        BCC PRTLAT          ; =>YES.PRINT IT                
-        SBC SCOUNT          ; REMOVE SCOUNT                 
-        INY                 ; INCREMENT QUOTIENT            
-        BNE DIVIDE                                          
+            CMP SCOUNT          ; DONE?                         
+            BCC PRTLAT          ; =>YES.PRINT IT                
+            SBC SCOUNT          ; REMOVE SCOUNT                 
+            INY                 ; INCREMENT QUOTIENT            
+            BNE DIVIDE                                          
 ;*                                                           
-PRTLAT  TYA                                                 ; Print Latency
-        AND #$0F            ; MAX LATENCY=15                
-        ORA #$B0            ; MAKE ASCII                    ; NO, this is make Apple Text; ASCII = $00..$7F
-        CMP #$BA            ; IS IT A-F                     
-        BCC PRTL2           ;=>NO                           
-        ADC #6              ;ADD 7 (INCLUDES CARRY)         
-PRTL2   STA TL12            ;STUFF LATENCY COUNT            
-        LDA #SP             ; SAY 'RWTS NOT ACTIVE'         
-        STA TL1                                             
+PRTLAT      TYA                                                 ; Print Latency
+            AND #$0F            ; MAX LATENCY=15                
+            ORA #$B0            ; MAKE ASCII                    ; NO, this is make Apple Text; ASCII = $00..$7F
+            CMP #$BA            ; IS IT A-F                     
+            BCC PRTL2           ;=>NO                           
+            ADC #6              ;ADD 7 (INCLUDES CARRY)         
+PRTL2       STA TL12            ;STUFF LATENCY COUNT            
+            LDA #SP             ; SAY 'RWTS NOT ACTIVE'         
+            STA TL1                                             
+	    PLP
 #endif
             RTS
 WRIT        = *
 #ifdef DIAGMODE
-       LDA #TC8             ; SAY 'WRITING'                 
-       STA TL8                                              
+            LDA #TC8             ; SAY 'WRITING'                 
+            STA TL8                                              
 #endif
             JSR WRITE16     ;WRITE NYBBLES NOW              ; ^ WRITRTN, page 137
 
 #ifdef DIAGMODE
-       LDA #SP              ;WRITE FINISHED                 
-       STA TL8                                              
+	lda TRACK
+	sta $8026
+	lda SECT
+	sta $8027
+            LDA #SP              ;WRITE FINISHED                 
+            STA TL8                                              
 #endif
             BCC ALLDONE     ;IF NO ERRORS.
             LDA #IBWPER     ;DISK IS WRITE PROTECTED!!
@@ -645,10 +650,10 @@ WRIT        = *
 ;* IF DRIVNO IS NEGATIVE, ON DRIVE 1
 ;* IF DRIVNO IS POSITIVE, ON DRIVE 2
 ;*
-MYSEEK      PHA             ; AND PRESERVE A-REGISTER       ; === Page 126 === Uhm, OK, Captain Obvious
+MYSEEK_TRK  PHA             ; AND PRESERVE A-REGISTER       ; === Page 126 === Uhm, OK, Captain Obvious
 #ifdef DIAGMODE
-        LDA #TC3            ;SAY 'SEEKING'                  
-        STA TL3                                             
+            LDA #TC3            ;SAY 'SEEKING'                  
+            STA TL3                                             
 #endif
             LDY #$01        ;IS THIS A TWO-PHASE DISC?      ; magic number DCT_OFFSET_TYPE = $1
             LDA (DEVCTBL),Y
@@ -656,31 +661,33 @@ MYSEEK      PHA             ; AND PRESERVE A-REGISTER       ; === Page 126 === U
             PLA
             BCC MYSEEK2     ;IF ONE PHASE PER TRACK
             ASL  
+MYSEEK_HTRK
             JSR MYSEEK2
-            LDA CURTRK      ;DIVIDE BACK DOWN
+            LDA CUR_HTRK      ;DIVIDE BACK DOWN
 #ifdef DIAGMODE
-        LDA #SP                                             
-        STA TL3             ;SEEK DONE                      
+            LDA #SP                                             
+            STA TL3             ;SEEK DONE                      
 #endif
             RTS
-MYSEEK2     STA TRKN        ;SAVE DESTINATION TRACK(*2)     ;
+	;
+MYSEEK2     STA DST_HTRK        ;SAVE DESTINATION TRACK(*2)     ;
+	;
             JSR XTOY        ;SET Y=SLOT#
-sty $8024
-            LDA DRV1TRK,Y
-sta $8023
+            LDA DRV1HTRK,Y
             BIT DRIVNO
             BMI WASD0       ;IS MINUS, ON DRIVE ZERO
-            LDA DRV2TRK,Y
-WASD0       STA CURTRK      ;THIS IS WHERE I AM             ; Going to resist cheap shot here
-sta $8022
-            LDA TRKN        ;AND WHERE I'M GOING TO         ; But I will point out crappy var names and better ones:
-sta $8021
+            LDA DRV2HTRK,Y
+WASD0       STA CUR_HTRK      ;THIS IS WHERE I AM             ; Going to resist cheap shot here
+	;
+            LDA DST_HTRK        ;AND WHERE I'M GOING TO         ; But I will point out crappy var names and better ones:
             BIT DRIVNO      ;NOW UPDATE SLOT DEPENDENT      ;   SRC_TRK
             BMI ISDRV1      ;LOCATIONS WITH TRACK           ;   DST_TRK
-            STA DRV2TRK,Y   ;INFORMATION
+            STA DRV2HTRK,Y   ;INFORMATION
             BPL GOSEEK      ;ALWAYS TAKEN
-ISDRV1      STA DRV1TRK,Y
-GOSEEK      JMP SEEK        ;GO THERE!
+ISDRV1      STA DRV1HTRK,Y
+	;
+GOSEEK      JMP SEEK_HTRK        ;GO THERE!
+	;
 XTOY        TXA
             LSR  
             LSR  
@@ -702,9 +709,9 @@ SETTRK      PHA             ;PRESERVE DESTINATION TRACK
             ASL             ;ASSUME TRACK IS HELD*2
 SETTRK2     BIT DRIVNO                                      ; unused label
             BMI ONDRV1      ;IF ON DRIVE 1(1), DRIVNO MINUS
-            STA DRV2TRK,Y
+            STA DRV2HTRK,Y
             BPL SETRTS
-ONDRV1      STA DRV1TRK,Y
+ONDRV1      STA DRV1HTRK,Y
 SETRTS      RTS
 
 ;************************************************************************
@@ -950,6 +957,7 @@ WSYNC       PHA             ;(3) EXACT TIMING               ; --- Sync FF ---
             BNE WDATA1      ;(3)  ALWAYS.  NO PAGE CROSS!!  ; v
 WDATA0      LDA NBUF2,Y     ;(4)  PRIOR 6-BIT NIBL.
 WDATA1      EOR NBUF2-1,Y   ;(5)  XOR WITH CURRENT.
+	.assert (* & $ff00) = ((*-8) & $ff00), "page crossing"
 ;*   (NBUF2 MUST BE ON PAGE BOUNDARY FOR TIMING!!)
             TAX             ;(2)  INDEX To 7-BIT NIBL
             LDA NIBL,X      ;(4)  MUST NOT CROSS PAGE!
@@ -1115,22 +1123,27 @@ POST2       DEX             ; NBUF IDX $55 TO $0
 ;*   1 USEC CYCLE TIME    *
 ;*                        *
 ;**************************
+	.dsb 224		; avoid page crossing
+
 READ16      LDY #$20        ;'MUST FIND' COUNT.
 RSYNC       DEY             ;IF CAN'T FIND MARKS
             BEQ RDERR       ;THEN EXIT WITH CARRY SET       ; === Page 103 ===
 READ1       LDA Q6L,X       ;READ NIBL.
             BPL READ1       ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (READ1 & $ff00), "page crossing"
 RSYNC1      EOR #$D5        ;DATA MARK 1?
             BNE RSYNC       ;LOOP IF NOT.
             NOP             ;DELAY BETWEEN NIBLS.
 READ2       LDA Q6L,X
             BPL READ2       ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (READ2 & $ff00), "page crossing"
             CMP #$AA        ;DATA MARK 2?
             BNE RSYNC1      ;(IF NOT, IS IT DM1?)            ;              NUM_6N2_NIBBLES = 342
             LDY #$56        ;INIT NBUF2 INDEX                ; magic number NUM_6N2_NIBBLES - 256
 ;*                           (ADDED NIBL DELAY)
 READ3       LDA Q6L,X
             BPL READ3       ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (READ3 & $ff00), "page crossing"
             CMP #$AD        ;DATA MARK 3?
             BNE RSYNC1
 ;*                           (CARRY SET IF DM3!)             ; And this imporant why??
@@ -1139,6 +1152,7 @@ RDATA1      DEY
             STY IDX
 READ4       LDY Q6L,X
             BPL READ4       ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (READ4 & $ff00), "page crossing"
             EOR DNIBL,Y     ;XOR 6-BIT NIBL.
             LDY IDX
             STA NBUF2,Y     ;STORE IN NBUF2 PAGE.
@@ -1146,6 +1160,7 @@ READ4       LDY Q6L,X
 RDATA2      STY IDX
 READ5       LDY Q6L,X
             BPL READ5       ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (READ5 & $ff00), "page crossing"
             EOR DNIBL,Y     ;XOR 6-BIT NIBL.
             LDY IDX
             STA NBUF1,Y     ;STORE IN NBUF1 PAGE.
@@ -1153,15 +1168,18 @@ READ5       LDY Q6L,X
             BNE RDATA2
 READ6       LDY Q6L,X       ;READ 7-BIT CSUM NIBL.
             BPL READ6       ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (READ6 & $ff00), "page crossing"
             CMP DNIBL,Y     ;IF LAST NBUF1 NIBL NOT
             BNE RDERR       ;EQUAL CHKSUM NIBL THEN ERR.
 READ7       LDA Q6L,X
             BPL READ7       ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (READ7 & $ff00), "page crossing"
             CMP #$DE        ;FIRST BIT SLIP MARK?
             BNE RDERR       ;(ERR IF NOT)
             NOP             ;DELAY BETWEEN NIBLS.
 READ8       LDA Q6L,X
             BPL READ8       ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (READ8 & $ff00), "page crossing"
             CMP #$AA        ;SECOND BIT SLIP MARK?
             BEQ RDEXIT      ;(DONE IF IT IS)
 
@@ -1237,17 +1255,20 @@ RDASYN      INY
             BEQ RDERR       ;(ADR MARK, ELSE ERR)
 RDA1        LDA Q6L,X       ;READ NIBL.
             BPL RDA1        ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (RDA1 & $ff00), "page crossing"
 RDASN1      CMP #$D5        ;ADR MARK 1?                     ; magic number DISK_ADR_PROLOG_1 EQU #$D5
             BNE RDASYN      ;(LOOP IF NOT)
             NOP             ;ADDED NIBL DELAY.
 RDA2        LDA Q6L,X
             BPL RDA2        ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (RDA2 & $ff00), "page crossing"
             CMP #$AA        ;ADR MARK 2?                     ; magic number DISK_ADR_PROLOG_2 EQU #$AA
             BNE RDASN1      ;(IF NOT, IS IT AM1?)
             LDY #$3         ;INDEX FOR 4-BYTE READ.          ; Technically, we read 8 disk nibbles &rarrow; 4 memory bytes
 ;*                           (ADDED NIBL DELAY)
 RDA3        LDA Q6L,X
             BPL RDA3        ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (RDA3 & $ff00), "page crossing"
             CMP #$96        ;ADR MARK 3?                     ; magic number DISK_ADR_PROLOG_3 EQU #$96
             BNE RDASN1      ;(IF NOT, IS IT AM1?)
 ;*                           (LEAVES CARRY SET!)             ; C=1, And this important WHY? Carry becomes Bit 0 of 4&4 Checksum odd nibble, Line #082
@@ -1255,10 +1276,12 @@ RDA3        LDA Q6L,X
 RDAFLD      STA CSUM
 RDA4        LDA Q6L,X       ;READ 'ODD BIT' NIBL.            ; Technically, read odd bits
             BPL RDA4        ;*** NO PAGE CROSS! ***          ; A=1a1c1e1g
+	.assert (* & $ff00) = (RDA4 & $ff00), "page crossing"
             ROL             ;ALIGN ODD BITS, '1' into LSB.  ; A=a1c1e1gC, and C stays set
             STA LAST
 RDA5        LDA Q6L,X       ;READ 'EVEN BIT' NIBL.           ; Technically, read even bits
             BPL RDA5        ;*** NO PAGE CROSS! ***          ; A=1b1d1f1h
+	.assert (* & $ff00) = (RDA5 & $ff00), "page crossing"
             AND LAST        ;MERGE ODD AND EVEN BITS         ; &=a1c1e1g1
             STA CSSTV,Y     ;STORE DATA BYTE.                ; A=abcdefgh, Store bytes in reverse order due to Y counting down
             EOR CSUM        ;XOR CHECKSUM
@@ -1268,11 +1291,13 @@ RDA5        LDA Q6L,X       ;READ 'EVEN BIT' NIBL.           ; Technically, read
             BNE RDERR       ;NONZERO, THEN ERROR.
 RDA6        LDA Q6L,X       ;FIRST BIT-SLIP NIBL.
             BPL RDA6        ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (RDA6 & $ff00), "page crossing"
             CMP #$DE                                        ; magic number DISK_ADR_EPILOG_1 EQU #$DE
             BNE RDERR       ;ERROR IF NONMATCH.
             NOP             ;DELAY BETWEEN NIBLS.
 RDA7        LDA Q6L,X       ;SECOND BIT-SLIP NIBL.
             BPL RDA7        ;*** NO PAGE CROSS! ***
+	.assert (* & $ff00) = (RDA7 & $ff00), "page crossing"
             CMP #$AA                                        ; magic number DISK_ADR_EPILOG_2 EQU #$AA
             BNE RDERR       ;ERROR IF NONMATCH.              ; Uh, what happened to checking the last disk nibble!?!?! DISK_ADR_EPILOG_3 EQU #$EB
 RDEXIT      CLC             ;CLEAR CARRY ON                  ; This probably deserves a "No shit, Sherlock"
@@ -1293,7 +1318,7 @@ RDEXIT      CLC             ;CLEAR CARRY ON                  ; This probably des
 ;*         HALFTRACK,     *                                  ; === Page 108 ===
 ;*         (SINGLE PHASE) *
 ;*                        *
-;*  CURTRK HOLDS CURRENT  *
+;*  CUR_HTRK HOLDS CURRENT  *
 ;*          HALFTRACK.    *
 ;*                        *
 ;*   ---- ON EXIT -----   *
@@ -1302,7 +1327,7 @@ RDEXIT      CLC             ;CLEAR CARRY ON                  ; This probably des
 ;*  Y-REG UNCERTAIN.      *
 ;*  X-REG UNCERTAIN.      *
 ;*                        *
-;*  CURTRK AND TRKN HOLD  *
+;*  CUR_HTRK AND DST_HTRK HOLD  *
 ;*      FINAL HALFTRACK.  *
 ;*                        *
 ;*  PRIOR HOLDS PRIOR     *
@@ -1319,28 +1344,28 @@ RDEXIT      CLC             ;CLEAR CARRY ON                  ; This probably des
 ;*                        *
 ;* --- VARIABLES USED --- *
 ;*                        *
-;*  CURTRK, TRKN, COUNT,  *
+;*  CUR_HTRK, DST_HTRK, COUNT,  *
 ;*    PRIOR, SLOTTEMP     *
 ;*    MONTIMEL, MONTIMEH  *
 ;*                        *
 ;**************************
-SEEK        STX SLOTTEMP    ;SAVE X-REG
-            STA TRKN        ;SAVE TARGET TRACK
-            CMP CURTRK      ;ON DESIRED TRACK?               ;
+SEEK_HTRK        STX SLOTTEMP    ;SAVE X-REG
+            STA DST_HTRK        ;SAVE TARGET TRACK
+            CMP CUR_HTRK      ;ON DESIRED TRACK?               ;
             BEQ SEEKRTS     ;YES, RETURN
             LDA #$0
             STA TRKCNT      ;HALFTRACK COUNT.
-SEEK2       LDA CURTRK      ;SAVE CURTRK FOR
+SEEK2       LDA CUR_HTRK      ;SAVE CUR_HTRK FOR
             STA PRIOR       ; DELAYED TURNOFF.
             SEC
-            SBC TRKN        ;DELTA-TRACKS.
-            BEQ SEEKEND     ;BR IF CURTRK=DESTINATION
+            SBC DST_HTRK        ;DELTA-TRACKS.
+            BEQ SEEKEND     ;BR IF CUR_HTRK=DESTINATION
             BCS OUT         ;(MOVE OUT, NOT IN)
             EOR #$FF        ;CALC TRKS TO GO
-            INC CURTRK      ;INCR CURRENT TRACK (IN).
+            INC CUR_HTRK      ;INCR CURRENT TRACK (IN).
             BCC MINTST      ;(ALWAYS TAKEN)
 OUT         ADC #$FE        ;CALC TRKS TO GO.
-            DEC CURTRK      ;DECR CURRENT TRACK (OUT).
+            DEC CUR_HTRK      ;DECR CURRENT TRACK (OUT).
 MINTST      CMP TRKCNT                                      ; crappy abbreviation: Min Test
             BCC MAXTST      ;AND 'TRKS MOVED'.
             LDA TRKCNT                                      ; crappy abbreviation: Max Test
@@ -1368,7 +1393,7 @@ SEEKEND     = *
 ;* TURN HEAD STEPPER PHASE ON/OFF
 ;*
 SETPHASE    = *
-            LDA CURTRK      ;GET CURRENT PHASE
+            LDA CUR_HTRK      ;GET CURRENT PHASE
 CLRPHASE    = *
             AND #3          ;MASK FOR 1 OF 4 PHASES
             ROL             ;DOUBLE FOR PHASE INDEX
@@ -1419,7 +1444,7 @@ CLRNBUF1    STA NBUF1,Y
             LDA #$28                                        ; magic number TODO FORMAT_SECTOR_GAP EQU 40
             STA NSYNC       ;BEGIN WITH 40 SELF-SYNC NIBLS.
 FORMTRK     LDA TRK
-            JSR MYSEEK      ;GOTO NEXT TRACK.
+            JSR MYSEEK_TRK      ;GOTO NEXT TRACK.
             JSR WTRACK16    ;WRITE AND VERIFY TRACK.
 FORMERR1    LDA #8          ;'UNABLE TO FORMAT' ERR CODE.    ; magic number TODO
             BCS FORMERR     ;CONTINUE IF NO ERROR.
@@ -1660,7 +1685,8 @@ INTRLEAV    = *                                           ; *sigh*
 ;*  ON BRANCHES                 *
 ;*                              *
 ;********************************
-	.byt 0	; avoid page boundary on WSYNC1
+
+	.dsb 250
 
 SWADR1      = *           ;TELL RELOCATOR WHERE TO BEGIN
 ;*******************************
@@ -1680,6 +1706,7 @@ WSYNC1      JSR WADRTS1     ;(12) FOR 40-USEC NIBLS.         ; +12 [23] JSR=+6, 
             NOP             ;(2) FOR DELAY.                  ;                  + 2 [ 6]         |
             DEY             ;(2) NEXT OF 'N' NIBLS.          ;                  + 2 [ 8]         |
             BNE WSYNC1      ;(3) *** NO PAGE CROSS! ***      ; + 2 [10] BEQ <== + 3 [11] --> BNE ^
+	.assert (* & $ff00) = (WSYNC1 & $ff00), "page crossing"
                                                                                     ; 32 µ seconds write DATA nibble
             LDA #$D5        ;(2) ADR MARK 1.                 ; + 2 [12] magic number DISK_ADR_PROLOG_1 EQU #$D5
             JSR WNIBLB2     ;(15,9,6) WRITE IT.              ; +24 [10] <-- JSR=6, WNIBLB2=9, WRNIBL=15
@@ -1844,8 +1871,8 @@ DNIBL	    =*-$96 		   ; uses bytes $96-$ff
 DINIT	.(
 	ldy #7
 	lda #0
-l	sta DRV1TRK,y
-	sta DRV2TRK,y
+l	sta DRV1HTRK,y
+	sta DRV2HTRK,y
 	dey
 	bpl l
 	rts
